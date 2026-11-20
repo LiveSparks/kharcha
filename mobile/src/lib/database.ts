@@ -1,69 +1,27 @@
 import * as SQLite from 'expo-sqlite';
 import { DEFAULT_PREFERENCES, DEFAULT_SENDERS } from './model';
-import type { Budget, Category, Preferences, SenderRule, Transaction } from './model';
+import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from './model';
+import { V1_SCHEMA, migrate } from './migrations';
+import type { SqlDatabase } from './migrations';
+import {
+  exportSnapshotSql, insertTransaction, linkDebitCardSql, listAccountRows, listPayeeRows, listTransactionRows,
+  markPayeeNudgedSql, movePayeeSql, renameAccountSql, renamePayeeSql, restoreSnapshotSql,
+  setTransactionCategorySql, setTransactionStatusSql,
+} from './ledger';
+import type { MoveTarget, Snapshot, SnapshotV2 } from './ledger';
+
+export type { MoveTarget, Snapshot } from './ledger';
 
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
 
-type TransactionRow = Omit<Transaction, 'sourceHash' | 'rawBody' | 'occurredAt' | 'amountPaise' | 'accountLast4' | 'counterpartyMasked' | 'counterpartyLast4' | 'createdAt' | 'updatedAt'> & {
-  source_hash: string | null;
-  raw_body: string | null;
-  occurred_at: number;
-  amount_paise: number;
-  account_last4: string | null;
-  counterparty_last4: string | null;
-  created_at: number;
-  updated_at: number;
-};
-
-function fromRow(row: TransactionRow): Transaction {
-  return {
-    id: row.id, sourceHash: row.source_hash, sender: row.sender, rawBody: row.raw_body,
-    occurredAt: row.occurred_at, merchant: row.merchant, amountPaise: row.amount_paise,
-    direction: row.direction, category: row.category, status: row.status,
-    accountLast4: row.account_last4, counterpartyMasked: null,
-    counterpartyLast4: row.counterparty_last4, reference: row.reference, confidence: row.confidence,
-    createdAt: row.created_at, updatedAt: row.updated_at,
-  };
-}
+function sql(db: SQLite.SQLiteDatabase): SqlDatabase { return db as unknown as SqlDatabase; }
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!database) {
     database = (async () => {
       const db = await SQLite.openDatabaseAsync('kharcha.db');
-      await db.execAsync(`
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE IF NOT EXISTS transactions (
-          id TEXT PRIMARY KEY,
-          source_hash TEXT UNIQUE,
-          sender TEXT,
-          raw_body TEXT,
-          occurred_at INTEGER NOT NULL,
-          merchant TEXT NOT NULL,
-          amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
-          direction TEXT NOT NULL CHECK (direction IN ('debit','credit')),
-          category TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('auto','review','duplicate_review','ignored','manual')),
-          account_last4 TEXT,
-          counterparty_last4 TEXT,
-          reference TEXT,
-          confidence REAL NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS transactions_by_date ON transactions (occurred_at DESC);
-        CREATE INDEX IF NOT EXISTS transactions_by_status ON transactions (status, occurred_at DESC);
-        CREATE TABLE IF NOT EXISTS budgets (
-          category TEXT PRIMARY KEY,
-          amount_paise INTEGER NOT NULL CHECK (amount_paise > 0)
-        );
-        CREATE TABLE IF NOT EXISTS senders (
-          address TEXT PRIMARY KEY,
-          label TEXT NOT NULL,
-          enabled INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      `);
+      await db.execAsync(`PRAGMA journal_mode = WAL;\n${V1_SCHEMA}`);
+      await migrate(sql(db));
       const seeded = await db.getFirstAsync<{ value: string }>('SELECT value FROM metadata WHERE key=?', 'default_senders');
       if (!seeded) {
         const existingUser = await db.getFirstAsync('SELECT 1 FROM preferences WHERE key=?', 'onboardingDone');
@@ -78,27 +36,21 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   return database;
 }
 
-export async function listTransactions(): Promise<Transaction[]> {
-  const rows = await (await getDatabase()).getAllAsync<TransactionRow>('SELECT * FROM transactions ORDER BY occurred_at DESC, created_at DESC');
-  return rows.map(fromRow);
-}
+async function ledger(): Promise<SqlDatabase> { return sql(await getDatabase()); }
 
-export async function addTransaction(t: Transaction): Promise<boolean> {
-  const db = await getDatabase();
-  const result = await db.runAsync(`INSERT OR IGNORE INTO transactions
-    (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,counterparty_last4,reference,confidence,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    t.id, t.sourceHash, t.sender, t.rawBody, t.occurredAt, t.merchant, t.amountPaise,
-    t.direction, t.category, t.status, t.accountLast4, t.counterpartyLast4, t.reference, t.confidence,
-    t.createdAt, t.updatedAt);
-  return result.changes > 0;
-}
+export async function listTransactions(): Promise<Transaction[]> { return listTransactionRows(await ledger()); }
+export async function listAccounts(): Promise<Account[]> { return listAccountRows(await ledger()); }
+export async function listPayees(): Promise<Payee[]> { return listPayeeRows(await ledger()); }
 
-export async function editTransaction(id: string, values: Pick<Transaction, 'merchant' | 'category' | 'status'>): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync('UPDATE transactions SET merchant=?,category=?,status=?,updated_at=? WHERE id=?',
-    values.merchant.trim(), values.category, values.status, Date.now(), id);
-}
+export async function addTransaction(t: Transaction): Promise<boolean> { return insertTransaction(await ledger(), t); }
+
+export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> { await setTransactionStatusSql(await ledger(), id, status); }
+export async function setTransactionCategory(id: string, category: Category): Promise<void> { await setTransactionCategorySql(await ledger(), id, category); }
+export async function movePayee(id: string, target: MoveTarget): Promise<string> { return movePayeeSql(await ledger(), id, target); }
+export async function renamePayee(id: string, name: string | null, category?: Category | null): Promise<void> { await renamePayeeSql(await ledger(), id, name, category); }
+export async function markPayeeNudged(id: string): Promise<void> { await markPayeeNudgedSql(await ledger(), id); }
+export async function renameAccount(id: string, name: string | null): Promise<void> { await renameAccountSql(await ledger(), id, name); }
+export async function linkDebitCard(cardId: string, bankId: string | null): Promise<void> { await linkDebitCardSql(await ledger(), cardId, bankId); }
 
 export async function listBudgets(): Promise<Budget[]> {
   return (await getDatabase()).getAllAsync<Budget>('SELECT category, amount_paise AS amountPaise FROM budgets ORDER BY category');
@@ -136,38 +88,6 @@ export async function savePreference<K extends keyof Preferences>(key: K, value:
   await (await getDatabase()).runAsync('INSERT INTO preferences (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, JSON.stringify(value));
 }
 
-export interface Snapshot {
-  schema: 1;
-  transactions: Transaction[];
-  budgets: Budget[];
-  senders: SenderRule[];
-  preferences: Preferences;
-  exportedAt: number;
-}
+export async function exportSnapshot(): Promise<SnapshotV2> { return exportSnapshotSql(await ledger()); }
 
-export async function exportSnapshot(): Promise<Snapshot> {
-  const [transactions, budgets, senders, preferences] = await Promise.all([
-    listTransactions(), listBudgets(), listSenders(), loadPreferences(),
-  ]);
-  return { schema: 1, transactions, budgets, senders, preferences, exportedAt: Date.now() };
-}
-
-export async function restoreSnapshot(snapshot: Snapshot): Promise<void> {
-  if (snapshot.schema !== 1 || !Array.isArray(snapshot.transactions) || !Array.isArray(snapshot.budgets) || !Array.isArray(snapshot.senders)) {
-    throw new Error('This backup format is not supported.');
-  }
-  const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async tx => {
-    await tx.execAsync('DELETE FROM transactions; DELETE FROM budgets; DELETE FROM senders; DELETE FROM preferences;');
-    for (const t of snapshot.transactions) {
-      await tx.runAsync(`INSERT INTO transactions (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,counterparty_last4,reference,confidence,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        t.id, t.sourceHash, t.sender, t.rawBody, t.occurredAt, t.merchant, t.amountPaise, t.direction,
-        t.category, t.status, t.accountLast4, t.counterpartyLast4, t.reference, t.confidence, t.createdAt, t.updatedAt);
-    }
-    for (const b of snapshot.budgets) await tx.runAsync('INSERT INTO budgets VALUES (?,?)', b.category, b.amountPaise);
-    for (const s of snapshot.senders) await tx.runAsync('INSERT INTO senders VALUES (?,?,?)', s.address, s.label, Number(s.enabled));
-    for (const [key, value] of Object.entries(snapshot.preferences)) {
-      await tx.runAsync('INSERT INTO preferences VALUES (?,?)', key, JSON.stringify(value));
-    }
-  });
-}
+export async function restoreSnapshot(snapshot: Snapshot): Promise<void> { await restoreSnapshotSql(await ledger(), snapshot); }

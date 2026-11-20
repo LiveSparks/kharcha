@@ -10,10 +10,10 @@ import { useLedger } from '@/state/LedgerProvider';
 export default function Budgets() {
   const p = usePalette();
   const now = useNow();
-  const { budgets, transactions } = useLedger();
+  const { budgets, transactions, categoryOf } = useLedger();
   const spent = transactions.filter(t => t.occurredAt >= startOfMonth(now) && t.direction === 'debit' && t.status !== 'ignored');
   const totalBudget = budgets.reduce((sum, b) => sum + b.amountPaise, 0);
-  const totalSpent = budgets.reduce((sum, b) => sum + spent.filter(t => t.category === b.category).reduce((n, t) => n + t.amountPaise, 0), 0);
+  const totalSpent = budgets.reduce((sum, b) => sum + spent.filter(t => categoryOf(t) === b.category).reduce((n, t) => n + t.amountPaise, 0), 0);
   return <Screen>
     <ScreenHead title="Keep room for life" action={{ icon: 'plus', label: 'Add a budget', onPress: () => router.push('/budget') }} />
     <View style={{ backgroundColor: p.leaf, borderRadius: 18, padding: 18, marginTop: 6 }}>
@@ -24,7 +24,7 @@ export default function Budgets() {
     </View>
     <View style={{ marginTop: 31, marginBottom: 11 }}><SectionTitle>Categories</SectionTitle></View>
     {budgets.length ? budgets.map(b => {
-      const used = spent.filter(t => t.category === b.category).reduce((sum, t) => sum + t.amountPaise, 0);
+      const used = spent.filter(t => categoryOf(t) === b.category).reduce((sum, t) => sum + t.amountPaise, 0);
       return <Pressable key={b.category} accessibilityRole="button" accessibilityLabel={`Edit ${b.category} budget`} onPress={() => router.push({ pathname: '/budget', params: { category: b.category } })} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: p.line }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><CategoryDot category={b.category} size={11} /><Text style={{ flex: 1, color: p.ink, fontFamily: fonts.bodyMedium, fontSize: 15 }}>{b.category}</Text><Text style={{ color: p.ink, fontFamily: fonts.mono }}>{money(used)}</Text></View>
         <View style={{ height: 6, backgroundColor: p.sunk, borderRadius: 4, marginTop: 12, overflow: 'hidden' }}><View style={{ width: `${Math.min(100, used / b.amountPaise * 100)}%`, height: 6, backgroundColor: used > b.amountPaise ? p.debit : p.leaf }} /></View>

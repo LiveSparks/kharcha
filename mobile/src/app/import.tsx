@@ -26,7 +26,8 @@ export default function ImportSms() {
       merchant: parsed.merchant, amountPaise: parsed.amountPaise, direction: parsed.direction, category: parsed.category,
       status: 'review', accountLast4: parsed.accountLast4, reference: parsed.reference,
       counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
-      confidence: parsed.confidence, createdAt: now, updatedAt: now });
+      confidence: parsed.confidence, createdAt: now, updatedAt: now,
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false });
   }
   async function save() {
     if (!candidate) return;

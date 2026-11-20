@@ -49,6 +49,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "replay": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/replay.mjs",
     "check": "npm run typecheck && npx expo-doctor",
     "lint": "expo lint"
   },

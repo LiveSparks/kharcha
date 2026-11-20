@@ -18,14 +18,14 @@ function periodStart(period: Period): number {
 
 export default function Insights() {
   const p = usePalette();
-  const { transactions } = useLedger();
+  const { transactions, categoryOf } = useLedger();
   const [period, setPeriod] = useState<Period>('Month');
   const data = useMemo(() => {
     const totals = Object.fromEntries(CATEGORIES.map(c => [c, 0])) as Record<typeof CATEGORIES[number], number>;
     const included = transactions.filter(t => t.occurredAt >= periodStart(period) && t.status !== 'ignored' && t.direction === 'debit');
-    for (const t of included) totals[t.category] += t.amountPaise;
+    for (const t of included) totals[categoryOf(t)] += t.amountPaise;
     return { entries: included.length, categories: CATEGORIES.map(category => ({ category, amount: totals[category] })).filter(row => row.amount > 0).sort((a, b) => b.amount - a.amount) };
-  }, [transactions, period]);
+  }, [transactions, period, categoryOf]);
   const total = data.categories.reduce((sum, row) => sum + row.amount, 0);
   return <Screen>
     <ScreenHead title="Where it went" />

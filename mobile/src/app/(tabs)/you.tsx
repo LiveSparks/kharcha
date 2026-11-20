@@ -6,10 +6,13 @@ import { Icon } from '@/ui/Icon';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
+import { unnamedCount } from '@/lib/resolve';
+import type { IconName } from '@/ui/Icon';
 
 export default function You() {
   const p = usePalette();
-  const { preferences, senders, setPreference, enableSms } = useLedger();
+  const { preferences, senders, payees, stats, setPreference, enableSms } = useLedger();
+  const unnamed = unnamedCount(payees, stats);
   async function toggleRead(value: boolean) {
     try {
       if (value) { const granted = await enableSms(); if (!granted) showMessage('Permission needed', 'SMS reading needs Android READ_SMS permission.'); }
@@ -26,6 +29,7 @@ export default function You() {
     <View style={{ marginTop: 30, marginBottom: 9, flexDirection: 'row', justifyContent: 'space-between' }}><SectionTitle>Bank senders</SectionTitle><Pressable accessibilityRole="button" accessibilityLabel="Add a bank sender" onPress={() => router.push('/sender')}><Icon name="plus" color={p.ink} size={21} /></Pressable></View>
     {senders.map(sender => <Pressable key={sender.address} accessibilityRole="button" accessibilityLabel={`Edit ${sender.label}`} onPress={() => router.push({ pathname: '/sender', params: { address: sender.address } })} style={{ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center' }}><View style={{ flex: 1 }}><Text style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{sender.label}</Text><Caption>{sender.address} · {sender.enabled ? 'Reading' : 'Paused'}</Caption></View><Icon name="chevron" color={p.muted} size={17} /></Pressable>)}
     <View style={{ marginTop: 32, marginBottom: 9 }}><SectionTitle>Your data</SectionTitle></View>
+    <Menu title={`Payees and accounts${unnamed ? ` · ${unnamed} unnamed` : ''}`} detail="Name who you pay and the accounts you pay from" icon="edit" onPress={() => router.push('/payees')} />
     <Menu title="Paste a bank SMS" detail="Parse a message you choose" icon="sms" onPress={() => router.push('/import')} />
     <Menu title="Encrypted backup" detail="Optional · stored on your Render API" icon="cloud" onPress={() => router.push('/backup')} />
     <View style={{ height: 24 }} />
@@ -36,7 +40,7 @@ function Setting({ title, detail, value, onChange }: { title: string; detail: st
   const p = usePalette();
   return <View style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center', gap: 15 }}><View style={{ flex: 1 }}><Body>{title}</Body><Caption>{detail}</Caption></View><Switch accessibilityLabel={title} value={value} onValueChange={onChange} trackColor={{ false: p.line, true: p.leaf }} thumbColor={value ? p.onLeaf : p.muted} /></View>;
 }
-function Menu({ title, detail, icon, onPress }: { title: string; detail: string; icon: 'sms' | 'cloud'; onPress: () => void }) {
+function Menu({ title, detail, icon, onPress }: { title: string; detail: string; icon: IconName; onPress: () => void }) {
   const p = usePalette();
   return <Pressable accessibilityRole="button" onPress={onPress} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Icon name={icon} color={p.ink} size={21} /><View style={{ flex: 1 }}><Body>{title}</Body><Caption>{detail}</Caption></View><Icon name="chevron" color={p.muted} size={17} /></Pressable>;
 }

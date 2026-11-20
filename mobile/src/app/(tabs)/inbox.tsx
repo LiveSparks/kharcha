@@ -13,11 +13,11 @@ const tabs: { title: string; status: TransactionStatus }[] = [
 
 export default function Inbox() {
   const p = usePalette();
-  const { transactions, setTransaction } = useLedger();
+  const { transactions, setTransactionStatus } = useLedger();
   const [selected, setSelected] = useState<TransactionStatus>('review');
   const visible = transactions.filter(t => t.status === selected && t.rawBody);
-  async function change(id: string, merchant: string, category: typeof transactions[number]['category'], status: TransactionStatus) {
-    try { await setTransaction(id, merchant, category, status); }
+  async function change(id: string, status: TransactionStatus) {
+    try { await setTransactionStatus(id, status); }
     catch (e) { showMessage('Could not update', e instanceof Error ? e.message : 'Try again.'); }
   }
   return <Screen>
@@ -28,9 +28,9 @@ export default function Inbox() {
     </View>
     <View style={{ marginTop: 16, gap: 15 }}>
       {visible.length ? visible.map(t => <SmsSlip key={t.id} transaction={t} actions={<View style={{ flexDirection: 'row', gap: 7 }}>
-        {selected !== 'ignored' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Keep separate' : 'Not a spend'} variant="ghost" onPress={() => void change(t.id, t.merchant, t.category, selected === 'duplicate_review' ? 'auto' : 'ignored')} /></View> : null}
+        {selected !== 'ignored' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Keep separate' : 'Not a spend'} variant="ghost" onPress={() => void change(t.id, selected === 'duplicate_review' ? 'auto' : 'ignored')} /></View> : null}
         <View style={{ flex: 1 }}><Action compact title="Fix" variant="secondary" onPress={() => router.push({ pathname: '/transaction/[id]', params: { id: t.id } })} /></View>
-        {selected !== 'auto' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Merge with earlier' : 'Looks right'} variant="leaf" onPress={() => void change(t.id, t.merchant, t.category, selected === 'duplicate_review' ? 'ignored' : 'auto')} /></View> : null}
+        {selected !== 'auto' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Merge with earlier' : 'Looks right'} variant="leaf" onPress={() => void change(t.id, selected === 'duplicate_review' ? 'ignored' : 'auto')} /></View> : null}
       </View>} />) : <EmptyState title={selected === 'review' ? 'All caught up' : 'Nothing here yet'} detail={selected === 'review' ? 'New messages that need a closer look will land here.' : selected === 'duplicate_review' ? 'Same-amount repeats inside a short window land here so you can merge them.' : 'Bank messages will appear after an Android scan.'} />}
     </View>
   </Screen>;

@@ -1,6 +1,7 @@
 import { AESEncryptionKey, AESSealedData, aesDecryptAsync, aesEncryptAsync, getRandomBytesAsync, randomUUID } from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import type { Snapshot } from './database';
+import { validateSnapshot } from './ledger';
 
 const STORAGE_KEY = 'kharcha.backup.credentials.v1';
 const apiUrl = process.env.EXPO_PUBLIC_BACKUP_API_URL?.replace(/\/$/, '');
@@ -84,7 +85,8 @@ export async function downloadBackup(code: string): Promise<Snapshot> {
   } catch {
     throw new Error('Could not decrypt this backup. Check the recovery code.');
   }
-  if (snapshot.schema !== 1) throw new Error('This backup was made by an unsupported version of Kharcha.');
+  // Schema 1 (pre-identity) and schema 2 restore; a newer app's snapshot is refused.
+  snapshot = validateSnapshot(snapshot);
   await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(credentials));
   return snapshot;
 }

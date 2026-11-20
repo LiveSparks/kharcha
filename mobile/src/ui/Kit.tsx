@@ -9,6 +9,7 @@ import { categoryColors, fonts, usePalette } from './theme';
 import type { Palette } from './theme';
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
+import { useLedger } from '@/state/LedgerProvider';
 
 export function Body({ children, muted = false, style }: { children: React.ReactNode; muted?: boolean; style?: object }) {
   const p = usePalette();
@@ -94,18 +95,22 @@ export function CategoryChip({ category, onPress }: { category: Category; onPres
 
 export function TransactionRow({ transaction }: { transaction: Transaction }) {
   const p = usePalette();
+  const { labelOf, categoryOf, accountOf } = useLedger();
   const t = transaction;
+  const label = labelOf(t);
+  const category = categoryOf(t);
+  const account = accountOf(t);
   return <Pressable onPress={() => router.push({ pathname: '/transaction/[id]', params: { id: t.id } })}
-    accessibilityRole="button" accessibilityLabel={`${t.merchant}, ${t.direction === 'debit' ? 'spent' : 'received'} ${money(t.amountPaise)}, ${t.category}`}
+    accessibilityRole="button" accessibilityLabel={`${label}, ${t.direction === 'debit' ? 'spent' : 'received'} ${money(t.amountPaise)}, ${category}`}
     style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: t.status === 'review' ? 8 : 0,
       gap: 12, borderRadius: 12, backgroundColor: t.status === 'review' ? p.marigoldSoft : pressed ? p.surface : 'transparent', borderBottomWidth: t.status === 'review' ? 0 : StyleSheet.hairlineWidth, borderBottomColor: p.line }]}>
     <View style={{ width: 36, height: 40, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontFamily: fonts.display, fontSize: 22, color: p.ink }}>{t.merchant[0]?.toUpperCase() ?? '?'}</Text>
-      <View style={{ position: 'absolute', right: 0, bottom: 0 }}><CategoryDot category={t.category} size={7} /></View>
+      <Text style={{ fontFamily: fonts.display, fontSize: 22, color: p.ink }}>{label.replace(/^a\/c\s*\**/i, '')[0]?.toUpperCase() ?? '?'}</Text>
+      <View style={{ position: 'absolute', right: 0, bottom: 0 }}><CategoryDot category={category} size={7} /></View>
     </View>
     <View style={{ flex: 1, minWidth: 0 }}>
-      <Label style={{ fontSize: 15 }}><Text numberOfLines={1}>{t.merchant}</Text></Label>
-      <Caption style={{ marginTop: 2 }} numberOfLines={1}>{t.category} · {timeLabel(t.occurredAt)}{t.accountLast4 ? ` · ··${t.accountLast4}` : ''}</Caption>
+      <Label style={{ fontSize: 15 }}><Text numberOfLines={1}>{label}</Text></Label>
+      <Caption style={{ marginTop: 2 }} numberOfLines={1}>{category} · {timeLabel(t.occurredAt)}{account ? ` · ${account.name ?? `··${account.last4}`}` : t.accountLast4 ? ` · ··${t.accountLast4}` : ''}</Caption>
     </View>
     <View style={{ alignItems: 'flex-end', gap: 3 }}>
       <Text style={{ fontFamily: fonts.mono, fontSize: 14, color: t.direction === 'debit' ? p.debit : p.credit }}>{signedMoney(t.amountPaise, t.direction)}</Text>
@@ -130,6 +135,7 @@ function highlightedBody(body: string, p: Palette): React.ReactNode[] {
 
 export function SmsSlip({ transaction, actions }: { transaction: Transaction; actions?: React.ReactNode }) {
   const p = usePalette();
+  const { labelOf, categoryOf } = useLedger();
   if (!transaction.rawBody) return null;
   return <View style={{ backgroundColor: p.surface, borderRadius: 20, borderWidth: 1, borderColor: transaction.status === 'review' ? p.marigold : p.line, overflow: 'hidden' }}>
     <View style={{ paddingHorizontal: 15, paddingTop: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -144,11 +150,11 @@ export function SmsSlip({ transaction, actions }: { transaction: Transaction; ac
       <View style={{ position: 'absolute', top: -8, right: -8, width: 16, height: 16, borderRadius: 8, backgroundColor: p.bg, borderWidth: 1, borderColor: p.line }} />
       <Caption>Read as</Caption>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <Label style={{ flex: 1 }}><Text numberOfLines={1}>{transaction.merchant}</Text></Label>
+        <Label style={{ flex: 1 }}><Text numberOfLines={1}>{labelOf(transaction)}</Text></Label>
         <Text style={{ fontFamily: fonts.mono, color: transaction.direction === 'debit' ? p.debit : p.credit, fontSize: 14 }}>{signedMoney(transaction.amountPaise, transaction.direction)}</Text>
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <CategoryChip category={transaction.category} />
+        <CategoryChip category={categoryOf(transaction)} />
         <Caption style={{ color: transaction.status === 'review' ? p.review : p.leaf }}>{transaction.status === 'review' ? 'Needs review' : transaction.status === 'ignored' ? 'Ignored' : 'In ledger'}</Caption>
       </View>
       {actions ? <View style={{ marginTop: 7 }}>{actions}</View> : null}

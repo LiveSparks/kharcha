@@ -7,6 +7,7 @@ import { useLedger } from '@/state/LedgerProvider';
 import { monthLabel, startOfMonth, money } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { showMessage } from '@/ui/dialog';
+import { HomeSlot } from '@/ui/HomeSlot';
 
 export default function Home() {
   const p = usePalette();
@@ -24,6 +25,7 @@ export default function Home() {
   }
   return <Screen>
     <ScreenHead title={`${monthLabel(now)}, so far`} action={{ icon: 'plus', label: 'Add a transaction', onPress: () => router.push('/manual') }} />
+    <HomeSlot />
     <SummarySlip spent={spent} received={received} budget={budget} lastScanAt={preferences.lastScanAt} />
     {error ? <Pressable onPress={clearError} style={{ marginTop: 17, padding: 12, backgroundColor: p.debitSoft, borderRadius: 10 }}><Body>{error}  ×</Body></Pressable> : null}
     {review ? <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/inbox')} style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: p.marigoldSoft, borderRadius: 12, padding: 15, marginTop: 19 }}>

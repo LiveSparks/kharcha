@@ -40,6 +40,8 @@ export async function readBankSms(senders: SenderRule[], since: number, autoAdd:
       accountLast4: parsed.accountLast4, reference: parsed.reference,
       counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
       confidence: parsed.confidence, createdAt: now, updatedAt: now,
+      // Account and payee resolve at insert (addTransaction), from sender + parser fields.
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false,
     });
   }
   // Duplicate notifications of one transfer (different senders/bodies) sit side by

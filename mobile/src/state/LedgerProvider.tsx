@@ -2,13 +2,15 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState, Platform } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
-  addTransaction, editTransaction, exportSnapshot, getDatabase, listBudgets, listSenders,
-  listTransactions, loadPreferences, removeBudget, removeSender, restoreSnapshot,
-  saveBudget, savePreference, saveSender,
+  addTransaction, exportSnapshot, getDatabase, linkDebitCard, listAccounts, listBudgets, listPayees, listSenders,
+  listTransactions, loadPreferences, markPayeeNudged, movePayee, removeBudget, removeSender, renameAccount,
+  renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender, setTransactionCategory, setTransactionStatus,
 } from '@/lib/database';
-import type { Snapshot } from '@/lib/database';
+import type { MoveTarget, Snapshot } from '@/lib/database';
 import { DEFAULT_PREFERENCES } from '@/lib/model';
-import type { Budget, Category, Direction, Preferences, SenderRule, Transaction, TransactionStatus } from '@/lib/model';
+import type { Account, Budget, Category, Direction, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from '@/lib/model';
+import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
+import type { PayeeStats } from '@/lib/resolve';
 import { readBankSms, requestSmsPermission } from '@/lib/sms';
 
 interface LedgerContextValue {
@@ -16,6 +18,16 @@ interface LedgerContextValue {
   busy: boolean;
   error: string | null;
   transactions: Transaction[];
+  accounts: Account[];
+  payees: Payee[];
+  // Read-time resolution (spec §3.3), memoized on the ledger revision.
+  accountsById: ReadonlyMap<string, Account>;
+  payeesById: ReadonlyMap<string, Payee>;
+  stats: ReadonlyMap<string, PayeeStats>;
+  labelOf: (t: Transaction) => string;
+  categoryOf: (t: Transaction) => Category;
+  payeeOf: (t: Transaction) => Payee | null;
+  accountOf: (t: Transaction) => Account | null;
   budgets: Budget[];
   senders: SenderRule[];
   preferences: Preferences;
@@ -23,7 +35,13 @@ interface LedgerContextValue {
   scan: (full?: boolean) => Promise<number>;
   enableSms: () => Promise<boolean>;
   addManual: (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt?: number) => Promise<void>;
-  setTransaction: (id: string, merchant: string, category: Category, status: TransactionStatus) => Promise<void>;
+  setTransactionStatus: (id: string, status: TransactionStatus) => Promise<void>;
+  setTransactionCategory: (id: string, category: Category) => Promise<void>;
+  movePayee: (id: string, target: MoveTarget) => Promise<string>;
+  renamePayee: (id: string, name: string | null, category?: Category | null) => Promise<void>;
+  markPayeeNudged: (id: string) => Promise<void>;
+  renameAccount: (id: string, name: string | null) => Promise<void>;
+  linkDebitCard: (cardId: string, bankId: string | null) => Promise<void>;
   setBudget: (category: Category, amountPaise: number) => Promise<void>;
   removeBudget: (category: Category) => Promise<void>;
   setSender: (sender: SenderRule) => Promise<void>;
@@ -44,16 +62,20 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [payees, setPayees] = useState<Payee[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [senders, setSenders] = useState<SenderRule[]>([]);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const scanBusyRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    const [nextTransactions, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
-      listTransactions(), listBudgets(), listSenders(), loadPreferences(),
+    const [nextTransactions, nextAccounts, nextPayees, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
+      listTransactions(), listAccounts(), listPayees(), listBudgets(), listSenders(), loadPreferences(),
     ]);
     setTransactions(nextTransactions);
+    setAccounts(nextAccounts);
+    setPayees(nextPayees);
     setBudgets(nextBudgets);
     setSenders(nextSenders);
     setPreferences(nextPreferences);
@@ -115,15 +137,41 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     await addTransaction({ id: randomUUID(), sourceHash: null, sender: null, rawBody: null,
       occurredAt, merchant: merchant.trim(), amountPaise, direction, category,
       status: 'manual', accountLast4: null, counterpartyMasked: null, counterpartyLast4: null,
-      reference: null, confidence: 1, createdAt: now, updatedAt: now });
+      reference: null, confidence: 1, createdAt: now, updatedAt: now,
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: true });
     await refresh();
   }, [refresh]);
 
-  const setTransaction = useCallback(async (id: string, merchant: string, category: Category, status: TransactionStatus) => {
-    if (!merchant.trim()) throw new Error('Merchant is required.');
-    await editTransaction(id, { merchant, category, status });
-    await refresh();
+  // Every mutation is a stored decision followed by a re-read; labels, categories and
+  // suggestions recompute from the new revision.
+  const mutations = useMemo(() => {
+    const after = <A extends unknown[], R>(write: (...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+      const result = await write(...args);
+      await refresh();
+      return result;
+    };
+    return {
+      setTransactionStatus: after(setTransactionStatus),
+      setTransactionCategory: after(setTransactionCategory),
+      movePayee: after(movePayee),
+      renamePayee: after(renamePayee),
+      markPayeeNudged: after(markPayeeNudged),
+      renameAccount: after(renameAccount),
+      linkDebitCard: after(linkDebitCard),
+    };
   }, [refresh]);
+
+  const resolved = useMemo(() => {
+    const payeesById = byId(payees);
+    const accountsById = byId(accounts);
+    return {
+      payeesById, accountsById, stats: payeeStats(transactions),
+      labelOf: (t: Transaction) => transactionLabel(t, payeesById),
+      categoryOf: (t: Transaction) => effectiveCategory(t, payeesById),
+      payeeOf: (t: Transaction) => { const id = effectivePayeeId(t); return (id && payeesById.get(id)) || null; },
+      accountOf: (t: Transaction) => (t.accountId && accountsById.get(t.accountId)) || null,
+    };
+  }, [transactions, payees, accounts]);
 
   const changeBudget = useCallback(async (category: Category, amountPaise: number) => {
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a budget above zero.');
@@ -137,15 +185,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<LedgerContextValue>(() => ({
-    ready, busy, error, transactions, budgets, senders, preferences, refresh, scan, enableSms,
-    addManual, setTransaction, setBudget: changeBudget,
+    ready, busy, error, transactions, accounts, payees, ...resolved, budgets, senders, preferences, refresh, scan, enableSms,
+    addManual, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
     setSender: async sender => { await saveSender(sender); await refresh(); },
     removeSender: async address => { await removeSender(address); await refresh(); },
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, budgets, senders, preferences, refresh, scan, enableSms, addManual, setTransaction, changeBudget, changePreference]);
+  }), [ready, busy, error, transactions, accounts, payees, resolved, budgets, senders, preferences, refresh, scan, enableSms, addManual, mutations, changeBudget, changePreference]);
 
   return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
 }
