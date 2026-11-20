@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { Action, Body, Caption, Screen, ScreenHead, SmsSlip } from '@/ui/Kit';
 import { Field, Note } from '@/ui/Forms';
-import { parseBankSms } from '@/lib/parser';
+import { parseBankSms, occurredAtFrom } from '@/lib/parser';
 import { addTransaction } from '@/lib/database';
 import { useLedger } from '@/state/LedgerProvider';
 import type { Transaction } from '@/lib/model';
@@ -20,10 +20,12 @@ export default function ImportSms() {
     const parsed = parseBankSms(body);
     if (!parsed) { showMessage('No transaction found', 'Use a debit or credit bank message with an amount. OTPs and promotions are skipped.'); return; }
     const now = Date.now();
+    const occurredAt = occurredAtFrom(body, now) ?? now;
     const sourceHash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${sender.trim()}\n${body.trim()}`);
-    setCandidate({ id: Crypto.randomUUID(), sourceHash, sender: sender.trim() || 'Pasted SMS', rawBody: body.trim(), occurredAt: now,
+    setCandidate({ id: Crypto.randomUUID(), sourceHash, sender: sender.trim() || 'Pasted SMS', rawBody: body.trim(), occurredAt,
       merchant: parsed.merchant, amountPaise: parsed.amountPaise, direction: parsed.direction, category: parsed.category,
       status: 'review', accountLast4: parsed.accountLast4, reference: parsed.reference,
+      counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
       confidence: parsed.confidence, createdAt: now, updatedAt: now });
   }
   async function save() {

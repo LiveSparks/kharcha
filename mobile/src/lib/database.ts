@@ -4,12 +4,13 @@ import type { Budget, Category, Preferences, SenderRule, Transaction } from './m
 
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
 
-type TransactionRow = Omit<Transaction, 'sourceHash' | 'rawBody' | 'occurredAt' | 'amountPaise' | 'accountLast4' | 'createdAt' | 'updatedAt'> & {
+type TransactionRow = Omit<Transaction, 'sourceHash' | 'rawBody' | 'occurredAt' | 'amountPaise' | 'accountLast4' | 'counterpartyMasked' | 'counterpartyLast4' | 'createdAt' | 'updatedAt'> & {
   source_hash: string | null;
   raw_body: string | null;
   occurred_at: number;
   amount_paise: number;
   account_last4: string | null;
+  counterparty_last4: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -19,7 +20,8 @@ function fromRow(row: TransactionRow): Transaction {
     id: row.id, sourceHash: row.source_hash, sender: row.sender, rawBody: row.raw_body,
     occurredAt: row.occurred_at, merchant: row.merchant, amountPaise: row.amount_paise,
     direction: row.direction, category: row.category, status: row.status,
-    accountLast4: row.account_last4, reference: row.reference, confidence: row.confidence,
+    accountLast4: row.account_last4, counterpartyMasked: null,
+    counterpartyLast4: row.counterparty_last4, reference: row.reference, confidence: row.confidence,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -40,8 +42,9 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
           direction TEXT NOT NULL CHECK (direction IN ('debit','credit')),
           category TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('auto','review','ignored','manual')),
+          status TEXT NOT NULL CHECK (status IN ('auto','review','duplicate_review','ignored','manual')),
           account_last4 TEXT,
+          counterparty_last4 TEXT,
           reference TEXT,
           confidence REAL NOT NULL,
           created_at INTEGER NOT NULL,
@@ -83,10 +86,10 @@ export async function listTransactions(): Promise<Transaction[]> {
 export async function addTransaction(t: Transaction): Promise<boolean> {
   const db = await getDatabase();
   const result = await db.runAsync(`INSERT OR IGNORE INTO transactions
-    (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,reference,confidence,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,counterparty_last4,reference,confidence,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     t.id, t.sourceHash, t.sender, t.rawBody, t.occurredAt, t.merchant, t.amountPaise,
-    t.direction, t.category, t.status, t.accountLast4, t.reference, t.confidence,
+    t.direction, t.category, t.status, t.accountLast4, t.counterpartyLast4, t.reference, t.confidence,
     t.createdAt, t.updatedAt);
   return result.changes > 0;
 }
@@ -157,9 +160,9 @@ export async function restoreSnapshot(snapshot: Snapshot): Promise<void> {
   await db.withExclusiveTransactionAsync(async tx => {
     await tx.execAsync('DELETE FROM transactions; DELETE FROM budgets; DELETE FROM senders; DELETE FROM preferences;');
     for (const t of snapshot.transactions) {
-      await tx.runAsync(`INSERT INTO transactions (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,reference,confidence,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      await tx.runAsync(`INSERT INTO transactions (id,source_hash,sender,raw_body,occurred_at,merchant,amount_paise,direction,category,status,account_last4,counterparty_last4,reference,confidence,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         t.id, t.sourceHash, t.sender, t.rawBody, t.occurredAt, t.merchant, t.amountPaise, t.direction,
-        t.category, t.status, t.accountLast4, t.reference, t.confidence, t.createdAt, t.updatedAt);
+        t.category, t.status, t.accountLast4, t.counterpartyLast4, t.reference, t.confidence, t.createdAt, t.updatedAt);
     }
     for (const b of snapshot.budgets) await tx.runAsync('INSERT INTO budgets VALUES (?,?)', b.category, b.amountPaise);
     for (const s of snapshot.senders) await tx.runAsync('INSERT INTO senders VALUES (?,?,?)', s.address, s.label, Number(s.enabled));

@@ -114,8 +114,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     const now = Date.now();
     await addTransaction({ id: randomUUID(), sourceHash: null, sender: null, rawBody: null,
       occurredAt, merchant: merchant.trim(), amountPaise, direction, category,
-      status: 'manual', accountLast4: null, reference: null, confidence: 1,
-      createdAt: now, updatedAt: now });
+      status: 'manual', accountLast4: null, counterpartyMasked: null, counterpartyLast4: null,
+      reference: null, confidence: 1, createdAt: now, updatedAt: now });
     await refresh();
   }, [refresh]);
 

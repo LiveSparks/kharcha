@@ -5,7 +5,8 @@ import { parseBankSms } from '../src/lib/parser.ts';
 test('parses a debit while keeping source fields for review', () => {
   assert.deepEqual(parseBankSms('A/C X3381 debited by INR 2,480.00 to VPA zomato@pay Ref 123456789012 on 04-10-2026'), {
     merchant: 'Zomato@Pay', amountPaise: 248000, direction: 'debit', category: 'Food & dining',
-    accountLast4: '3381', reference: '123456789012', confidence: 0.95,
+    accountLast4: '3381', reference: '123456789012', counterpartyMasked: null, counterpartyLast4: null,
+    confidence: 0.95,
   });
 });
 
@@ -38,6 +39,23 @@ test('stops the merchant before payment rail wording', () => {
   assert.equal(result?.merchant, 'Book Mart');
   assert.equal(result?.category, 'Shopping');
   assert.equal(result?.amountPaise, 49900);
+});
+
+test('parses the UPI sent shape that banks send for every UPI debit', () => {
+  const body = 'Sent Rs.220.00 | From HDFC Bank A/C *4620 | To SUNITA | On 22/12/25 | Ref 611100000002 | Not You? | Call 18002586161/SMS BLOCK UPI to 7308080808';
+  assert.deepEqual(parseBankSms(body), {
+    merchant: 'Sunita', amountPaise: 22000, direction: 'debit', category: 'Transfers',
+    accountLast4: '4620', reference: '611100000002', counterpartyMasked: null, counterpartyLast4: null,
+    confidence: 0.95,
+  });
+  // both confidence assertions in this test cover the direct-amount contexts
+  const retail = parseBankSms('Sent Rs.260.00 | From HDFC Bank A/C *4471 | To Blinkit | On 18/12/25 | Ref 611100000012 | Not You? | Call 18002586161/SMS BLOCK UPI to 7308080808');
+  assert.equal(retail?.merchant, 'Blinkit');
+  assert.equal(retail?.category, 'Groceries');
+});
+
+test('sent without a money context stays non-transactional', () => {
+  assert.equal(parseBankSms('We have sent you an email with your statement. INR 100 late fee may apply.'), null);
 });
 
 test('scores credit messages and caps confidence without a contextual amount', () => {

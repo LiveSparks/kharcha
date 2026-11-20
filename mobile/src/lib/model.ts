@@ -5,7 +5,7 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 export type Direction = 'debit' | 'credit';
-export type TransactionStatus = 'auto' | 'review' | 'ignored' | 'manual';
+export type TransactionStatus = 'auto' | 'review' | 'duplicate_review' | 'ignored' | 'manual';
 
 export interface Transaction {
   id: string;
@@ -19,6 +19,9 @@ export interface Transaction {
   category: Category;
   status: TransactionStatus;
   accountLast4: string | null;
+  // Masked counterparty account when the bank hides the other side ("to a/c **5280").
+  counterpartyMasked: string | null;
+  counterpartyLast4: string | null;
   reference: string | null;
   confidence: number;
   createdAt: number;

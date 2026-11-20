@@ -28,10 +28,10 @@ export default function Inbox() {
     </View>
     <View style={{ marginTop: 16, gap: 15 }}>
       {visible.length ? visible.map(t => <SmsSlip key={t.id} transaction={t} actions={<View style={{ flexDirection: 'row', gap: 7 }}>
-        {selected !== 'ignored' ? <View style={{ flex: 1 }}><Action compact title="Not a spend" variant="ghost" onPress={() => void change(t.id, t.merchant, t.category, 'ignored')} /></View> : null}
+        {selected !== 'ignored' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Keep separate' : 'Not a spend'} variant="ghost" onPress={() => void change(t.id, t.merchant, t.category, selected === 'duplicate_review' ? 'auto' : 'ignored')} /></View> : null}
         <View style={{ flex: 1 }}><Action compact title="Fix" variant="secondary" onPress={() => router.push({ pathname: '/transaction/[id]', params: { id: t.id } })} /></View>
-        {selected !== 'auto' ? <View style={{ flex: 1 }}><Action compact title="Looks right" variant="leaf" onPress={() => void change(t.id, t.merchant, t.category, 'auto')} /></View> : null}
-      </View>} />) : <EmptyState title={selected === 'review' ? 'All caught up' : 'Nothing here yet'} detail={selected === 'review' ? 'New messages that need a closer look will land here.' : 'Bank messages will appear after an Android scan.'} />}
+        {selected !== 'auto' ? <View style={{ flex: 1 }}><Action compact title={selected === 'duplicate_review' ? 'Merge with earlier' : 'Looks right'} variant="leaf" onPress={() => void change(t.id, t.merchant, t.category, selected === 'duplicate_review' ? 'ignored' : 'auto')} /></View> : null}
+      </View>} />) : <EmptyState title={selected === 'review' ? 'All caught up' : 'Nothing here yet'} detail={selected === 'review' ? 'New messages that need a closer look will land here.' : selected === 'duplicate_review' ? 'Same-amount repeats inside a short window land here so you can merge them.' : 'Bank messages will appear after an Android scan.'} />}
     </View>
   </Screen>;
 }

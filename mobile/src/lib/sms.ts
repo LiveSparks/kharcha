@@ -1,6 +1,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 import * as Crypto from 'expo-crypto';
-import { parseBankSms } from './parser';
+import { parseBankSms, occurredAtFrom } from './parser';
+import { flagDuplicates } from './duplicates';
 import type { SenderRule, Transaction } from './model';
 
 export function canReadSms(): boolean { return Platform.OS === 'android'; }
@@ -29,14 +30,19 @@ export async function readBankSms(senders: SenderRule[], since: number, autoAdd:
       `${sms.sender}\n${sms.receivedAt}\n${sms.body}`,
     );
     const now = Date.now();
+    // Body timestamp precedence: banks put the true transaction time inside the text.
+    const occurredAt = occurredAtFrom(sms.body, sms.receivedAt) ?? sms.receivedAt;
     result.push({
       id: Crypto.randomUUID(), sourceHash, sender: sms.sender, rawBody: sms.body,
-      occurredAt: sms.receivedAt, merchant: parsed.merchant, amountPaise: parsed.amountPaise,
+      occurredAt, merchant: parsed.merchant, amountPaise: parsed.amountPaise,
       direction: parsed.direction, category: parsed.category,
       status: autoAdd && parsed.confidence >= 0.9 ? 'auto' : 'review',
       accountLast4: parsed.accountLast4, reference: parsed.reference,
+      counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
       confidence: parsed.confidence, createdAt: now, updatedAt: now,
     });
   }
-  return result;
+  // Duplicate notifications of one transfer (different senders/bodies) sit side by
+  // side in the read batch: mark the later copy for review instead of dropping it.
+  return flagDuplicates(result);
 }

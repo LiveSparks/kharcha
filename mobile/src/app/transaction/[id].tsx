@@ -21,7 +21,7 @@ function TransactionSummary({ transaction: t }: { transaction: Transaction }) {
 }
 
 const statusLabels: Record<TransactionStatus, string> = {
-  review: 'Needs review', ignored: 'Ignored', manual: 'Manual', auto: 'In ledger',
+  review: 'Needs review', duplicate_review: 'Possible duplicate', ignored: 'Ignored', manual: 'Manual', auto: 'In ledger',
 };
 
 function TransactionFacts({ transaction: t }: { transaction: Transaction }) {

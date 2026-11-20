@@ -28,7 +28,7 @@ class KharchaSmsModule : Module() {
         val dateIndex = cursor.getColumnIndexOrThrow("date")
         while (cursor.moveToNext() && output.size < 1500) {
           val sender = cursor.getString(addressIndex) ?: continue
-          if (normalizeSender(sender) !in allowed) continue
+          if (!matchesSender(sender, allowed)) continue
           val body = cursor.getString(bodyIndex) ?: continue
           if (body.length > 4000) continue
           output.add(mapOf("sender" to sender, "body" to body, "receivedAt" to cursor.getLong(dateIndex)))
@@ -40,4 +40,12 @@ class KharchaSmsModule : Module() {
 
   private fun normalizeSender(value: String): String =
     value.trim().uppercase().replace(Regex("^[A-Z]{2}-"), "")
+
+  // Carriers route one bank header as "HDFCBK", "VM-HDFCBK", "VMHDFCBKS": a two-letter
+  // routing prefix and a channel letter attach to the registered ID, so a rule of five
+  // or more characters matches when it sits inside the header, not only when it equals it.
+  private fun matchesSender(sender: String, allowed: Set<String>): Boolean {
+    val candidate = normalizeSender(sender)
+    return allowed.any { rule -> candidate == rule || rule.length >= 5 && candidate.contains(rule) }
+  }
 }
