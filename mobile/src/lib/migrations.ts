@@ -1,8 +1,10 @@
 import { mergeAccountKind } from './banks.ts';
 import { identityFor } from './identity.ts';
 import type { AccountIdentity, PayeeIdentity } from './identity.ts';
+import { relinkLegacyFlags } from './duplicates.ts';
 import { parseBankSms } from './parser.ts';
-import type { SqlValue } from './rows.ts';
+import { transactionFromRow } from './rows.ts';
+import type { SqlValue, TransactionRow } from './rows.ts';
 import type { AccountKind } from './model';
 
 // Schema versioning with PRAGMA user_version (app-modification spec §4.1).
@@ -137,12 +139,89 @@ async function v1ToV2(tx: SqlExecutor): Promise<void> {
   await tx.execAsync('PRAGMA user_version = 2');
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2];
+const V2_COLUMNS = [
+  'id', 'source_hash', 'sender', 'raw_body', 'occurred_at', 'merchant', 'amount_paise', 'direction', 'category',
+  'status', 'account_last4', 'counterparty_last4', 'reference', 'confidence', 'created_at', 'updated_at',
+  'account_id', 'payee_id', 'payee_override_id', 'counterparty_masked', 'category_by_user',
+].join(', ');
+
+// v2 → v3 (P2, spec §4.2). SQLite can't alter a CHECK, so `transactions` is rebuilt
+// with 'merged' allowed and the duplicate columns added. The app never turns on
+// PRAGMA foreign_keys (and it can't change inside a transaction), so the drop and
+// rename don't cascade. The self-reference names `transactions`, which resolves to
+// the rebuilt table once it is renamed.
+async function v2ToV3(tx: SqlExecutor): Promise<void> {
+  await tx.execAsync(`
+    CREATE TABLE transactions_v3 (
+      id TEXT PRIMARY KEY,
+      source_hash TEXT UNIQUE,
+      sender TEXT,
+      raw_body TEXT,
+      occurred_at INTEGER NOT NULL,
+      merchant TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+      direction TEXT NOT NULL CHECK (direction IN ('debit','credit')),
+      category TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('auto','review','duplicate_review','ignored','manual','merged')),
+      account_last4 TEXT,
+      counterparty_last4 TEXT,
+      reference TEXT,
+      confidence REAL NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      account_id TEXT REFERENCES accounts(id),
+      payee_id TEXT REFERENCES payees(id),
+      payee_override_id TEXT REFERENCES payees(id),
+      counterparty_masked TEXT,
+      category_by_user INTEGER NOT NULL DEFAULT 0,
+      duplicate_of TEXT REFERENCES transactions(id),
+      pre_flag_status TEXT CHECK (pre_flag_status IN ('auto','review','manual')),
+      duplicate_cleared INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO transactions_v3 (${V2_COLUMNS}) SELECT ${V2_COLUMNS} FROM transactions;
+    DROP TABLE transactions;
+    ALTER TABLE transactions_v3 RENAME TO transactions;
+    CREATE INDEX transactions_by_date ON transactions (occurred_at DESC);
+    CREATE INDEX transactions_by_status ON transactions (status, occurred_at DESC);
+    CREATE INDEX transactions_by_payee ON transactions (payee_id);
+    CREATE INDEX transactions_by_account ON transactions (account_id, occurred_at);
+    CREATE INDEX transactions_by_duplicate ON transactions (duplicate_of);
+    CREATE TABLE unparsed_messages (
+      id             TEXT PRIMARY KEY,
+      source_hash    TEXT UNIQUE NOT NULL,
+      sender         TEXT NOT NULL,
+      raw_body       TEXT NOT NULL,
+      received_at    INTEGER NOT NULL,
+      amount_paise   INTEGER,
+      status         TEXT NOT NULL CHECK (status IN ('pending','added','dismissed')),
+      transaction_id TEXT REFERENCES transactions(id),
+      created_at     INTEGER NOT NULL
+    );
+    CREATE TABLE duplicate_dismissals (
+      a_id       TEXT NOT NULL REFERENCES transactions(id),
+      b_id       TEXT NOT NULL REFERENCES transactions(id),
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (a_id, b_id)
+    );
+  `);
+  // Legacy flags have no partner: link them, or unflag the ones with none.
+  const autoAddPref = await tx.getFirstAsync<{ value: string }>("SELECT value FROM preferences WHERE key='autoAdd'");
+  const autoAdd = autoAddPref ? JSON.parse(autoAddPref.value) !== false : true;
+  const rows = (await tx.getAllAsync<TransactionRow>(
+    "SELECT * FROM transactions WHERE status IN ('auto','review','manual','duplicate_review') ORDER BY occurred_at, created_at, id")).map(transactionFromRow);
+  for (const patch of relinkLegacyFlags(rows, autoAdd)) {
+    await tx.runAsync('UPDATE transactions SET status=?, duplicate_of=?, pre_flag_status=? WHERE id=?',
+      patch.status, patch.duplicateOf, patch.preFlagStatus, patch.id);
+  }
+  await tx.execAsync('PRAGMA user_version = 3');
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3];
 
 export const LATEST_VERSION = migrations.length + 1;
 
 // Tables created by migrations, dependents first (dropped in this order on restore).
-export const MIGRATED_TABLES = ['payees', 'accounts'] as const;
+export const MIGRATED_TABLES = ['duplicate_dismissals', 'unparsed_messages', 'payees', 'accounts'] as const;
 
 export async function readVersion(db: SqlExecutor): Promise<number> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');

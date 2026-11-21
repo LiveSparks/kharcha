@@ -4,13 +4,15 @@ Kharcha is a local-first spending ledger. This document describes the code in th
 
 ## What the app reads
 
-On Android, and only after the user grants `READ_SMS` permission, the app queries SMS received from sender IDs on its local allowlist. The default list contains `HDFCBK`, `VM-SBIUPI`, and `AX-ICICIT`; users can edit it. Standard two-letter routing prefixes are ignored when matching. The native module sends the bodies of matching messages to the app's JavaScript parser on the same device. Other sender bodies are not returned to JavaScript. The app scans up to 90 days on first use, then checks recent messages when opened.
+On Android, and only after the user grants `READ_SMS` permission, the app queries SMS received from sender IDs on its local allowlist. The default list contains `HDFCBK`, `VM-SBIUPI`, `AX-ICICIT`, and `PNBSMS`; users can edit it. Standard two-letter routing prefixes are ignored when matching. The native module sends the bodies of matching messages to the app's JavaScript parser on the same device. Other sender bodies are not returned to JavaScript. The app scans up to 90 days on first use, then checks recent messages when opened.
 
 The parser looks for debit or credit transactions, rejects common OTP and marketing patterns, and marks uncertain matches for review. These filters are heuristic; a user should verify entries against their bank records. Manually pasted messages are processed in the same way. iOS and web do not read the device inbox.
 
 ## What stays local
 
 On iOS and Android, transactions, source SMS text for accepted transactions, budgets, sender rules, and preferences are stored in the app's SQLite database. The database is protected by the operating system's app sandbox; this project does **not** add local database encryption. The web preview stores the same data in that browser's local storage, which is not encrypted by Kharcha. Clearing the site's browser data removes it. No analytics SDK, advertising SDK, or account sign-in is included.
+
+**Messages the app couldn't read.** When an allowlisted bank SMS states an amount and a transaction word (such as "debited" or "credited") but the parser can't read it, and it isn't an offer, a loan or bill notice, a collect request or a notice of a future debit, the app keeps its sender, time and **full original text** in the same local database. This is the only case where the text of a message that didn't become a transaction is stored. It appears in the Inbox under *Couldn't read* so the user can add it by hand. *Dismiss* deletes the stored text and keeps only its sender, time and a hash, so the same message isn't shown again on the next scan. Adding it as a transaction keeps the message stored, linked to the new entry. Decisions that two entries are not duplicates are also stored locally, as a pair of entry IDs. Both are included in the optional encrypted backup below and are never sent anywhere else.
 
 ## Optional backup
 

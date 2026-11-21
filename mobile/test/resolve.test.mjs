@@ -16,7 +16,7 @@ function txn(over = {}) {
     id: `x${seq}`, sourceHash: null, sender: 'VM-HDFCBK', rawBody: 'x', occurredAt: over.occurredAt ?? seq * 1000,
     merchant: 'Unknown merchant', amountPaise: 1000, direction: 'debit', category: 'Transfers', status: 'auto',
     accountLast4: null, counterpartyMasked: null, counterpartyLast4: null, reference: null, confidence: 0.95,
-    createdAt: seq, updatedAt: seq, accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, ...over,
+    createdAt: seq, updatedAt: seq, accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, duplicateOf: null, preFlagStatus: null, duplicateCleared: false, ...over,
   };
 }
 const payee = over => ({ id: 'p', kind: 'merchant', bank: '', key: 'k', masked: null, name: null, category: null, nudgedAt: null, createdAt: 0, ...over });

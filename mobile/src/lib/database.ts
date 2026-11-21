@@ -1,16 +1,16 @@
 import * as SQLite from 'expo-sqlite';
 import { DEFAULT_PREFERENCES, DEFAULT_SENDERS } from './model';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from './model';
+import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { V1_SCHEMA, migrate } from './migrations';
 import type { SqlDatabase } from './migrations';
 import {
-  exportSnapshotSql, insertTransaction, linkDebitCardSql, listAccountRows, listPayeeRows, listTransactionRows,
-  markPayeeNudgedSql, movePayeeSql, renameAccountSql, renamePayeeSql, restoreSnapshotSql,
-  setTransactionCategorySql, setTransactionStatusSql,
+  dismissUnparsedSql, exportSnapshotSql, ingestScanSql, insertTransaction, keepBothSql, linkDebitCardSql, linkUnparsedSql,
+  listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, movePayeeSql,
+  renameAccountSql, renamePayeeSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
 } from './ledger';
-import type { MoveTarget, Snapshot, SnapshotV2 } from './ledger';
+import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV2 } from './ledger';
 
-export type { MoveTarget, Snapshot } from './ledger';
+export type { IngestResult, MoveTarget, ScanBatch, Snapshot } from './ledger';
 
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
 
@@ -42,7 +42,16 @@ export async function listTransactions(): Promise<Transaction[]> { return listTr
 export async function listAccounts(): Promise<Account[]> { return listAccountRows(await ledger()); }
 export async function listPayees(): Promise<Payee[]> { return listPayeeRows(await ledger()); }
 
+export async function listUnparsed(): Promise<UnparsedMessage[]> { return listUnparsedRows(await ledger()); }
+
 export async function addTransaction(t: Transaction): Promise<boolean> { return insertTransaction(await ledger(), t); }
+export async function ingestScan(batch: ScanBatch): Promise<IngestResult> { return ingestScanSql(await ledger(), batch); }
+
+export async function mergeDuplicate(flaggedId: string, survivorId: string): Promise<void> { await mergeDuplicateSql(await ledger(), flaggedId, survivorId); }
+export async function keepBoth(id: string): Promise<void> { await keepBothSql(await ledger(), id); }
+export async function unmerge(id: string): Promise<void> { await unmergeSql(await ledger(), id); }
+export async function linkUnparsed(id: string, transactionId: string): Promise<void> { await linkUnparsedSql(await ledger(), id, transactionId); }
+export async function dismissUnparsed(id: string): Promise<void> { await dismissUnparsedSql(await ledger(), id); }
 
 export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> { await setTransactionStatusSql(await ledger(), id, status); }
 export async function setTransactionCategory(id: string, category: Category): Promise<void> { await setTransactionCategorySql(await ledger(), id, category); }

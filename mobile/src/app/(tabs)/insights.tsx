@@ -5,6 +5,7 @@ import { CATEGORIES } from '@/lib/model';
 import { money } from '@/lib/format';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
+import { isLive } from '@/lib/resolve';
 
 type Period = 'Week' | 'Month' | 'Year';
 function periodStart(period: Period): number {
@@ -22,7 +23,7 @@ export default function Insights() {
   const [period, setPeriod] = useState<Period>('Month');
   const data = useMemo(() => {
     const totals = Object.fromEntries(CATEGORIES.map(c => [c, 0])) as Record<typeof CATEGORIES[number], number>;
-    const included = transactions.filter(t => t.occurredAt >= periodStart(period) && t.status !== 'ignored' && t.direction === 'debit');
+    const included = transactions.filter(t => t.occurredAt >= periodStart(period) && isLive(t) && t.direction === 'debit');
     for (const t of included) totals[categoryOf(t)] += t.amountPaise;
     return { entries: included.length, categories: CATEGORIES.map(category => ({ category, amount: totals[category] })).filter(row => row.amount > 0).sort((a, b) => b.amount - a.amount) };
   }, [transactions, period, categoryOf]);

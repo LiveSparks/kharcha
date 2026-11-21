@@ -1,10 +1,12 @@
 import { identityFor, overrideKey } from './identity.ts';
 import { LATEST_VERSION, MIGRATED_TABLES, V1_SCHEMA, migrate, migrations, readVersion, upsertAccount, upsertPayee } from './migrations.ts';
 import type { SqlDatabase, SqlExecutor } from './migrations.ts';
-import { accountFromRow, payeeFromRow, transactionFromRow, transactionToRow, v1TransactionRow } from './rows.ts';
-import type { AccountRow, BudgetRow, PayeeRow, PreferenceRow, SenderRow, SqlValue, TransactionRow } from './rows.ts';
+import { accountFromRow, payeeFromRow, transactionFromRow, transactionToRow, unparsedFromRow, v1TransactionRow } from './rows.ts';
+import type { AccountRow, BudgetRow, DismissalRow, PayeeRow, PreferenceRow, SenderRow, SqlValue, TransactionRow, UnparsedRow } from './rows.ts';
+import { DUPLICATE_WINDOW_MS, flagDuplicates, keepBothDecision, mergeDecision, pairKey, unmergeDecision } from './duplicates.ts';
+import type { DuplicateDecision } from './duplicates.ts';
 import { validateName } from './resolve.ts';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from './model';
+import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 
 // SQL ledger operations shared by the app (expo-sqlite) and the node harness
 // (node:sqlite). Raw parser fields are written once, at insert, and never again.
@@ -20,6 +22,10 @@ export async function listAccountRows(db: SqlExecutor): Promise<Account[]> {
 
 export async function listPayeeRows(db: SqlExecutor): Promise<Payee[]> {
   return (await db.getAllAsync<PayeeRow>('SELECT * FROM payees ORDER BY created_at, id')).map(payeeFromRow);
+}
+
+export async function listUnparsedRows(db: SqlExecutor): Promise<UnparsedMessage[]> {
+  return (await db.getAllAsync<UnparsedRow>('SELECT * FROM unparsed_messages ORDER BY received_at DESC, id')).map(unparsedFromRow);
 }
 
 async function insertRow(tx: SqlExecutor, table: string, row: object, columns?: ReadonlySet<string>): Promise<number> {
@@ -44,8 +50,102 @@ export async function insertTransaction(db: SqlDatabase, t: Transaction): Promis
   return added;
 }
 
+// A message the scan read but the parser couldn't ("Couldn't read"). Kept once per SMS.
+export interface UnparsedInput {
+  id: string; sourceHash: string; sender: string; rawBody: string; receivedAt: number; amountPaise: number | null;
+}
+
+export interface ScanBatch { transactions: Transaction[]; unparsed: UnparsedInput[] }
+export interface IngestResult { added: number; flagged: number; unparsed: number }
+
+// Scan ingest (spec §5.2): drop rows already in the ledger by source hash, resolve
+// identity, flag duplicates against the ledger from 24h before the batch and against
+// the batch itself, then insert oldest first. One transaction for the whole batch.
+export async function ingestScanSql(db: SqlDatabase, batch: ScanBatch, now: number = Date.now()): Promise<IngestResult> {
+  const result: IngestResult = { added: 0, flagged: 0, unparsed: 0 };
+  await db.withExclusiveTransactionAsync(async tx => {
+    const fresh: Transaction[] = [];
+    const seen = new Set<string>();
+    for (const t of batch.transactions) {
+      if (t.sourceHash && seen.has(t.sourceHash)) continue;
+      if (await tx.getFirstAsync('SELECT 1 FROM transactions WHERE id=? OR (source_hash IS NOT NULL AND source_hash=?)', t.id, t.sourceHash)) continue;
+      if (t.sourceHash) seen.add(t.sourceHash);
+      const { account, payee } = identityFor(t);
+      const accountId = account ? await upsertAccount(tx, account, t.createdAt) : null;
+      const payeeId = payee ? await upsertPayee(tx, payee, t.createdAt) : null;
+      fresh.push({ ...t, accountId, payeeId, payeeOverrideId: null });
+    }
+    if (fresh.length) {
+      const since = Math.min(...fresh.map(t => t.occurredAt)) - DUPLICATE_WINDOW_MS;
+      const existing = (await tx.getAllAsync<TransactionRow>(
+        "SELECT * FROM transactions WHERE occurred_at >= ? AND status IN ('auto','review','manual','duplicate_review')", since)).map(transactionFromRow);
+      const dismissed = new Set((await tx.getAllAsync<DismissalRow>('SELECT a_id, b_id FROM duplicate_dismissals')).map(d => pairKey(d.a_id, d.b_id)));
+      const flagged = flagDuplicates(fresh, existing, dismissed).sort((a, b) => a.occurredAt - b.occurredAt || a.createdAt - b.createdAt);
+      for (const t of flagged) {
+        if (await insertRow(tx, 'transactions', transactionToRow(t)) > 0) {
+          result.added++;
+          if (t.status === 'duplicate_review') result.flagged++;
+        }
+      }
+    }
+    for (const m of batch.unparsed) {
+      result.unparsed += (await tx.runAsync(
+        "INSERT OR IGNORE INTO unparsed_messages (id,source_hash,sender,raw_body,received_at,amount_paise,status,created_at) VALUES (?,?,?,?,?,?,'pending',?)",
+        m.id, m.sourceHash, m.sender, m.rawBody, m.receivedAt, m.amountPaise, now)).changes;
+    }
+  });
+  return result;
+}
+
+// Leaving the duplicate states through a plain status change drops the pair link.
 export async function setTransactionStatusSql(db: SqlExecutor, id: string, status: TransactionStatus): Promise<void> {
-  await db.runAsync('UPDATE transactions SET status=?, updated_at=? WHERE id=?', status, Date.now(), id);
+  const keepLink = status === 'duplicate_review' || status === 'merged' ? 1 : 0;
+  await db.runAsync(`UPDATE transactions SET status=?, updated_at=?,
+    duplicate_of=CASE WHEN ? THEN duplicate_of ELSE NULL END, pre_flag_status=CASE WHEN ? THEN pre_flag_status ELSE NULL END WHERE id=?`,
+  status, Date.now(), keepLink, keepLink, id);
+}
+
+// --- Duplicate review (spec §5.2) --------------------------------------------------
+
+async function decide(db: SqlDatabase, ids: (tx: SqlExecutor) => Promise<TransactionRow[]>, choose: (rows: Map<string, Transaction>) => DuplicateDecision): Promise<void> {
+  await db.withExclusiveTransactionAsync(async tx => {
+    const rows = new Map((await ids(tx)).map(r => [r.id, transactionFromRow(r)]));
+    const { patches, dismiss } = choose(rows);
+    const now = Date.now();
+    for (const p of patches) {
+      await tx.runAsync('UPDATE transactions SET status=?, duplicate_of=?, pre_flag_status=?, duplicate_cleared=COALESCE(?, duplicate_cleared), updated_at=? WHERE id=?',
+        p.status, p.duplicateOf, p.preFlagStatus, p.duplicateCleared === undefined ? null : Number(p.duplicateCleared), now, p.id);
+    }
+    if (dismiss) await tx.runAsync('INSERT OR IGNORE INTO duplicate_dismissals (a_id,b_id,created_at) VALUES (?,?,?)', dismiss[0], dismiss[1], now);
+  });
+}
+
+const pairRows = (flaggedId: string) => (tx: SqlExecutor) => tx.getAllAsync<TransactionRow>(
+  `SELECT * FROM transactions WHERE id=? OR id=(SELECT duplicate_of FROM transactions WHERE id=?)
+     OR duplicate_of=(SELECT duplicate_of FROM transactions WHERE id=?)`, flaggedId, flaggedId, flaggedId);
+
+export async function mergeDuplicateSql(db: SqlDatabase, flaggedId: string, survivorId: string): Promise<void> {
+  await decide(db, pairRows(flaggedId), rows => mergeDecision(rows, flaggedId, survivorId));
+}
+
+export async function keepBothSql(db: SqlDatabase, id: string): Promise<void> {
+  await decide(db, tx => tx.getAllAsync<TransactionRow>('SELECT * FROM transactions WHERE id=?', id), rows => keepBothDecision(rows, id));
+}
+
+export async function unmergeSql(db: SqlDatabase, id: string): Promise<void> {
+  await decide(db, tx => tx.getAllAsync<TransactionRow>('SELECT * FROM transactions WHERE id=?', id), rows => unmergeDecision(rows, id));
+}
+
+// --- Couldn't read ------------------------------------------------------------------
+
+export async function linkUnparsedSql(db: SqlExecutor, id: string, transactionId: string): Promise<void> {
+  await db.runAsync("UPDATE unparsed_messages SET status='added', transaction_id=? WHERE id=? AND status='pending'", transactionId, id);
+}
+
+// Dismissing blanks the stored body (privacy posture, spec §9); the hash stays so the
+// same SMS isn't captured again.
+export async function dismissUnparsedSql(db: SqlExecutor, id: string): Promise<void> {
+  await db.runAsync("UPDATE unparsed_messages SET status='dismissed', raw_body='' WHERE id=?", id);
 }
 
 export async function setTransactionCategorySql(db: SqlExecutor, id: string, category: Category): Promise<void> {
@@ -128,6 +228,9 @@ export interface SnapshotV2 {
   preferences: PreferenceRow[];
   accounts: AccountRow[];
   payees: PayeeRow[];
+  // v3; omitted when the writer's ledger predates the table.
+  unparsed_messages?: UnparsedRow[];
+  duplicate_dismissals?: DismissalRow[];
   exportedAt: number;
 }
 
@@ -167,6 +270,8 @@ export async function exportSnapshotSql(db: SqlExecutor): Promise<SnapshotV2> {
     preferences: await read<PreferenceRow>('preferences'),
     accounts: await read<AccountRow>('accounts'),
     payees: await read<PayeeRow>('payees'),
+    ...tables.has('unparsed_messages') ? { unparsed_messages: await read<UnparsedRow>('unparsed_messages') } : {},
+    ...tables.has('duplicate_dismissals') ? { duplicate_dismissals: await read<DismissalRow>('duplicate_dismissals') } : {},
     exportedAt: Date.now(),
   };
 }
@@ -194,9 +299,11 @@ export async function restoreSnapshotSql(db: SqlDatabase, input: unknown): Promi
       return;
     }
     // Parents before children so the references hold.
-    for (const table of ['accounts', 'payees', 'transactions', 'budgets', 'senders', 'preferences'] as const) {
+    for (const table of ['accounts', 'payees', 'transactions', 'unparsed_messages', 'duplicate_dismissals', 'budgets', 'senders', 'preferences'] as const) {
+      const rows = (snapshot[table] ?? []) as unknown as Record<string, unknown>[];
+      if (!rows.length) continue;
       const columns = new Set((await tx.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map(c => c.name));
-      for (const row of snapshot[table] as unknown as Record<string, unknown>[]) await insertRow(tx, table, row, columns);
+      for (const row of rows) await insertRow(tx, table, row, columns);
     }
   });
   await migrate(db);

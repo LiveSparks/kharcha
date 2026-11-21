@@ -339,7 +339,7 @@ compatible accounts (equal or either NULL); compatible payees (same effective pa
 either side without a payee, **or** gap ≤ 30 min); and the pair not in
 `duplicate_dismissals`. Setting the flag sets `pre_flag_status` to the row's would-be
 status, `status = 'duplicate_review'` and `duplicate_of = partner`. Identical bodies are
-still dropped by `source_hash`. Replay target: **92 flags** on the 9-month export.
+still dropped by `source_hash`. Replay target: **86 flags** on the 9-month export (WF-5 estimated 92 on an earlier parse; amended 2026-11-21, see verification-gate §5 P2).
 
 **Survivor score**: one point each for a non-null `account_id`, a payee that isn't
 "Unknown merchant", a non-null `reference`, and a body timestamp
@@ -506,7 +506,7 @@ From top to bottom:
     runs `--experimental-strip-types`, so no new dependency is added).
   - Pure-function suites (`resolve`, `duplicates`, `balances`, `schedules`, `habits`) run
     on **synthetic** fixtures only: invented values, real message shapes.
-- **Corpus targets** (92 flags, 8 candidates, anchor counts, 608/646 reconciliation) run in
+- **Corpus targets** (86 flags, 8 candidates, anchor counts, 608/646 reconciliation) run in
   the local `npm run replay` harness, gated on `KHARCHA_CORPUS` and skipped in CI. The real
   export is never committed. Decided in WF-9; see [verification-gate.md](verification-gate.md).
 - The baseline must not regress: parser corpus 49/49 and reconciliation 608/646.

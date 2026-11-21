@@ -11,8 +11,16 @@ import { showMessage } from './dialog';
 // add sources: pending duplicates (P2) > naming nudge (P1) > schedule suggestion (P4).
 export function HomeSlot() {
   const p = usePalette();
-  const { payees, stats, markPayeeNudged } = useLedger();
+  const { payees, stats, pairs, markPayeeNudged } = useLedger();
   const nudge = useMemo(() => namingNudge(payees, stats), [payees, stats]);
+  // Pending duplicates distort totals, so they outrank naming (WF-5). No snooze.
+  if (pairs.length) {
+    const n = pairs.length;
+    return <View style={{ backgroundColor: p.marigoldSoft, borderRadius: 14, padding: 15, marginBottom: 16, gap: 12 }}>
+      <Text style={{ fontFamily: fonts.bodyMedium, color: p.ink, fontSize: 15 }}>{n} possible {n === 1 ? 'duplicate' : 'duplicates'} to check</Text>
+      <View style={{ flexDirection: 'row' }}><Action compact variant="leaf" title="Review" onPress={() => router.push({ pathname: '/(tabs)/inbox', params: { tab: 'duplicates' } })} /></View>
+    </View>;
+  }
   if (!nudge) return null;
   // Either answer stamps nudged_at, so the card never returns for this payee.
   async function answer(name: boolean) {

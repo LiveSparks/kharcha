@@ -5,7 +5,9 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 export type Direction = 'debit' | 'credit';
-export type TransactionStatus = 'auto' | 'review' | 'duplicate_review' | 'ignored' | 'manual';
+export type TransactionStatus = 'auto' | 'review' | 'duplicate_review' | 'ignored' | 'manual' | 'merged';
+// The status a flagged or merged row returns to (Keep both / Unmerge).
+export type RestorableStatus = 'auto' | 'review' | 'manual';
 
 export interface Transaction {
   id: string;
@@ -33,6 +35,29 @@ export interface Transaction {
   payeeOverrideId: string | null;
   // The user picked this row's category, so the payee default doesn't apply.
   categoryByUser: boolean;
+  // Duplicate review (schema v3). duplicate_review: the earlier partner; merged: the survivor.
+  duplicateOf: string | null;
+  preFlagStatus: RestorableStatus | null;
+  // Set by Keep both / Unmerge (informational; the pair table stops re-flagging).
+  duplicateCleared: boolean;
+}
+
+// Defaults for a row that was never flagged.
+export const NOT_A_DUPLICATE = { duplicateOf: null, preFlagStatus: null, duplicateCleared: false } as const;
+
+export type UnparsedStatus = 'pending' | 'added' | 'dismissed';
+
+// An allowed-sender SMS the parser rejected but that reads like a transaction ("Couldn't read").
+export interface UnparsedMessage {
+  id: string;
+  sourceHash: string;
+  sender: string;
+  rawBody: string;
+  receivedAt: number;
+  amountPaise: number | null;
+  status: UnparsedStatus;
+  transactionId: string | null;
+  createdAt: number;
 }
 
 export type AccountKind = 'bank' | 'credit_card' | 'debit_card' | 'unknown';

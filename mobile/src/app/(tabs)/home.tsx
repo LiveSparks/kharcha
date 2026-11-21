@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Action, Body, Caption, EmptyState, Screen, ScreenHead, SectionTitle, SummarySlip, TransactionRow } from '@/ui/Kit';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
+import { isLive } from '@/lib/resolve';
 import { monthLabel, startOfMonth, money } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { showMessage } from '@/ui/dialog';
@@ -14,7 +15,7 @@ export default function Home() {
   const now = useNow();
   const { transactions, budgets, preferences, scan, busy, error, clearError } = useLedger();
   const start = startOfMonth(now);
-  const current = transactions.filter(t => t.occurredAt >= start && t.status !== 'ignored');
+  const current = transactions.filter(t => t.occurredAt >= start && isLive(t));
   const spent = current.filter(t => t.direction === 'debit').reduce((sum, t) => sum + t.amountPaise, 0);
   const received = current.filter(t => t.direction === 'credit').reduce((sum, t) => sum + t.amountPaise, 0);
   const budget = budgets.reduce((sum, item) => sum + item.amountPaise, 0);

@@ -6,6 +6,8 @@ import { CategoryPicker } from '@/ui/Forms';
 import { Icon } from '@/ui/Icon';
 import { dateLabel, signedMoney } from '@/lib/format';
 import { accountLabel, payeeLabel } from '@/lib/resolve';
+import { gapLabel, mergedCopies } from '@/lib/duplicates';
+import { DuplicateActions } from '@/ui/Duplicates';
 import type { Category, Transaction, TransactionStatus } from '@/lib/model';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
@@ -24,7 +26,58 @@ function TransactionSummary({ transaction: t }: { transaction: Transaction }) {
 
 const statusLabels: Record<TransactionStatus, string> = {
   review: 'Needs review', duplicate_review: 'Possible duplicate', ignored: 'Ignored', manual: 'Manual', auto: 'In ledger',
+  merged: 'Merged copy',
 };
+
+function open(id: string) { router.push({ pathname: '/transaction/[id]', params: { id } }); }
+
+// Duplicate review on the detail screen (WF-5): a pending pair offers the same three
+// actions as the Inbox, a merged copy offers Unmerge, and a survivor links its copies.
+function DuplicatePanel({ transaction: t }: { transaction: Transaction }) {
+  const p = usePalette();
+  const { pairs, transactions, labelOf, unmerge } = useLedger();
+  const [busy, setBusy] = useState(false);
+  const pair = pairs.find(x => x.flagged.id === t.id || x.partner.id === t.id);
+  const copies = mergedCopies(t.id, transactions);
+  const survivor = t.status === 'merged' && t.duplicateOf ? transactions.find(x => x.id === t.duplicateOf) : undefined;
+  if (!pair && !copies.length && !survivor) return null;
+  const box = { backgroundColor: p.surface, borderRadius: 12, padding: 15, gap: 12, marginBottom: 22, borderWidth: 1, borderColor: pair ? p.marigold : p.line };
+  // A merged copy shows only where it went; a kept row shows any pair still waiting
+  // on it and, below, the copies already merged into it.
+  if (survivor) {
+    async function undo() {
+      setBusy(true);
+      try { await unmerge(t.id); } catch (e) { showMessage('Could not unmerge', e instanceof Error ? e.message : 'Try again.'); } finally { setBusy(false); }
+    }
+    return <View style={box}>
+      <Pressable accessibilityRole="button" onPress={() => open(survivor.id)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flex: 1 }}><Label>Merged into {labelOf(survivor)}</Label><Caption>Not counted in totals. Kept here with its original message.</Caption></View>
+        <Icon name="chevron" color={p.muted} size={15} />
+      </Pressable>
+      <Action compact variant="secondary" title={busy ? 'Unmerging…' : 'Unmerge'} disabled={busy} onPress={() => void undo()} />
+    </View>;
+  }
+  const other = pair ? (pair.flagged.id === t.id ? pair.partner : pair.flagged) : null;
+  return <View style={box}>
+    {pair && other ? <>
+      <Pressable accessibilityRole="button" onPress={() => open(other.id)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Label>Possible duplicate of {labelOf(other)}</Label>
+          <Caption>{gapLabel(pair.gapMs)} · {other.sender ?? 'Added by you'} · {pair.survivorId === t.id ? 'this one is kept' : 'the other is kept'}</Caption>
+        </View>
+        <Icon name="chevron" color={p.muted} size={15} />
+      </Pressable>
+      <DuplicateActions pair={pair} />
+    </> : null}
+    {copies.length ? <View style={{ gap: 8, borderTopWidth: pair ? 1 : 0, borderTopColor: p.line, paddingTop: pair ? 12 : 0 }}>
+      <Label>{copies.length === 1 ? '1 merged copy' : `${copies.length} merged copies`}</Label>
+      {copies.map(c => <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={`Open merged copy from ${c.sender ?? 'you'}`} onPress={() => open(c.id)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Caption style={{ flex: 1 }}>{c.sender ?? 'Added by you'} · {gapLabel(Math.abs(c.occurredAt - t.occurredAt))}</Caption>
+        <Icon name="chevron" color={p.muted} size={15} />
+      </Pressable>)}
+    </View> : null}
+  </View>;
+}
 
 // The Payee row (WF-3): the effective payee's label with Name / Rename, and the
 // per-row "Move this one" escape hatch below it.
@@ -67,6 +120,10 @@ function TransactionFacts({ transaction: t }: { transaction: Transaction }) {
 }
 
 function TransactionActions({ transaction, busy, onSave }: { transaction: Transaction; busy: boolean; onSave: (status: TransactionStatus) => void }) {
+  // Pending and merged copies change state only through the duplicate panel.
+  if (transaction.status === 'duplicate_review' || transaction.status === 'merged') {
+    return <View style={{ gap: 9, paddingBottom: 15 }}><Action title={busy ? 'Saving…' : 'Save'} disabled={busy} onPress={() => onSave(transaction.status)} /></View>;
+  }
   return <View style={{ gap: 9, paddingBottom: 15 }}>
     <Action title={busy ? 'Saving…' : 'Save and include'} disabled={busy} onPress={() => onSave(transaction.status === 'manual' ? 'manual' : 'auto')} />
     {transaction.status !== 'ignored' ? <Action title="Ignore this message" variant="ghost" disabled={busy} onPress={() => onSave('ignored')} /> : null}
@@ -97,6 +154,7 @@ export default function TransactionDetail() {
   }
   return <Screen><ScreenHead title="The whole story" back />
     <TransactionSummary transaction={t} />
+    <DuplicatePanel transaction={t} />
     <PayeeRow transaction={t} />
     <View style={{ marginBottom: 28 }}><CategoryPicker value={category} onChange={setPicked} /></View>
     <TransactionFacts transaction={t} />

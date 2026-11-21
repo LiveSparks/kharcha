@@ -6,12 +6,13 @@ import { money, startOfMonth } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
+import { isLive } from '@/lib/resolve';
 
 export default function Budgets() {
   const p = usePalette();
   const now = useNow();
   const { budgets, transactions, categoryOf } = useLedger();
-  const spent = transactions.filter(t => t.occurredAt >= startOfMonth(now) && t.direction === 'debit' && t.status !== 'ignored');
+  const spent = transactions.filter(t => t.occurredAt >= startOfMonth(now) && t.direction === 'debit' && isLive(t));
   const totalBudget = budgets.reduce((sum, b) => sum + b.amountPaise, 0);
   const totalSpent = budgets.reduce((sum, b) => sum + spent.filter(t => categoryOf(t) === b.category).reduce((n, t) => n + t.amountPaise, 0), 0);
   return <Screen>

@@ -142,8 +142,12 @@ Notation: **R** = replay target (numeric, fixed corpus) · **D** = device step (
 
 ### P2: Duplicate review
 
-- **R** **92** flags on the corpus, 13 of them > 30 min apart. 0 flags on the Highway Fuels
-  / Suresh Kumar Rao ₹50 pair.
+- **R** **86** flags on the corpus, 11 of them > 30 min apart. 0 flags on the Highway Fuels
+  / Suresh Kumar Rao ₹50 pair (and none on any different-payee pair > 30 min apart).
+  *Amended 2026-11-21 (operator-approved):* WF-5's estimate was 92/13, but it was measured
+  on an earlier parse (its old-rule count was 116; the current parse gives 120). Under the
+  rule as written, both the upgrade relink and scan ingest flag the same 86 pairs, and every
+  legacy flag the rule drops fails its account or payee test.
 - **R** The Couldn't-read set: every row has an amount and a transaction verb, none matches
   the promo exclusions, and the count is ≤ 100 (baseline recorded).
 - **DB** `user_version` = 3. Every `duplicate_review` row has `duplicate_of` set, and no

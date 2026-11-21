@@ -21,7 +21,7 @@ test('v1 → v2: version, row count and every raw parser field are unchanged', a
   await seedV1(db);
   assert.equal(await readVersion(db), 1); // user_version 0 counts as v1
   const before = await db.getAllAsync('SELECT * FROM transactions ORDER BY id');
-  assert.equal(await migrate(db), 2);
+  assert.equal(await migrate(db, 2), 2);
   assert.equal((await db.getFirstAsync('PRAGMA user_version')).user_version, 2);
   const after = await db.getAllAsync('SELECT * FROM transactions ORDER BY id');
   assert.equal(after.length, before.length);
@@ -67,7 +67,7 @@ test('a failed step leaves v1 in place and is retried on the next launch', async
   assert.ok(!columns.includes('payee_id'), 'ALTERs rolled back with the failed step');
   assert.equal(await db.getFirstAsync("SELECT name FROM sqlite_master WHERE name='accounts'"), null);
   await db.execAsync('DROP TABLE payees');
-  assert.equal(await migrate(db), 2);
+  assert.equal(await migrate(db), LATEST_VERSION);
 });
 
 test('a ledger from a newer app version is refused', async () => {
@@ -165,7 +165,7 @@ test('backup schema 2 round-trips names, links and overrides', async () => {
   await movePayeeSql(db, moved.id, { newName: 'Cousin' });
   const snapshot = JSON.parse(JSON.stringify(await exportSnapshotSql(db)));
   assert.equal(snapshot.schema, 2);
-  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.schemaVersion, LATEST_VERSION);
   assert.ok('category_by_user' in snapshot.transactions[0], 'rows carry every column');
 
   const restored = openDatabase();
@@ -173,7 +173,7 @@ test('backup schema 2 round-trips names, links and overrides', async () => {
   await migrate(restored);
   await insertTransaction(restored, smsTransaction(...MESSAGES[0].slice(0, 2), T0, 'stale'));
   await restoreSnapshotSql(restored, snapshot);
-  assert.equal(await readVersion(restored), 2);
+  assert.equal(await readVersion(restored), LATEST_VERSION);
   const again = await exportSnapshotSql(restored);
   for (const table of ['transactions', 'accounts', 'payees', 'budgets', 'senders', 'preferences']) {
     const key = r => JSON.stringify(Object.entries(r).sort());

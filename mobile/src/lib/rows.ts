@@ -1,4 +1,4 @@
-import type { Account, Budget, Category, Payee, SenderRule, Transaction } from './model';
+import type { Account, Budget, Category, Payee, RestorableStatus, SenderRule, Transaction, UnparsedMessage } from './model';
 
 // Storage-shaped rows (snake_case, one key per column). SQLite returns these, backup
 // snapshot schema 2 carries them verbatim, and the web preview stores them, so a row
@@ -29,6 +29,10 @@ export interface TransactionRow {
   payee_override_id: string | null;
   counterparty_masked: string | null;
   category_by_user: number;
+  // v3
+  duplicate_of: string | null;
+  pre_flag_status: RestorableStatus | null;
+  duplicate_cleared: number;
 }
 
 export interface AccountRow {
@@ -40,6 +44,14 @@ export interface PayeeRow {
   id: string; kind: Payee['kind']; bank: string; key: string; masked: string | null;
   name: string | null; category: Category | null; nudged_at: number | null; created_at: number;
 }
+
+export interface UnparsedRow {
+  id: string; source_hash: string; sender: string; raw_body: string; received_at: number;
+  amount_paise: number | null; status: UnparsedMessage['status']; transaction_id: string | null; created_at: number;
+}
+
+// a_id < b_id, so a pair has one spelling.
+export interface DismissalRow { a_id: string; b_id: string; created_at: number }
 
 export interface BudgetRow { category: Category; amount_paise: number }
 export interface SenderRow { address: string; label: string; enabled: number }
@@ -55,6 +67,8 @@ export function transactionFromRow(row: TransactionRow): Transaction {
     createdAt: row.created_at, updatedAt: row.updated_at,
     accountId: row.account_id ?? null, payeeId: row.payee_id ?? null,
     payeeOverrideId: row.payee_override_id ?? null, categoryByUser: !!row.category_by_user,
+    duplicateOf: row.duplicate_of ?? null, preFlagStatus: row.pre_flag_status ?? null,
+    duplicateCleared: !!row.duplicate_cleared,
   };
 }
 
@@ -68,6 +82,8 @@ export function transactionToRow(t: Transaction): TransactionRow {
     account_id: t.accountId ?? null, payee_id: t.payeeId ?? null,
     payee_override_id: t.payeeOverrideId ?? null, counterparty_masked: t.counterpartyMasked ?? null,
     category_by_user: t.categoryByUser ? 1 : 0,
+    duplicate_of: t.duplicateOf ?? null, pre_flag_status: t.preFlagStatus ?? null,
+    duplicate_cleared: t.duplicateCleared ? 1 : 0,
   };
 }
 
@@ -79,6 +95,20 @@ export function payeeFromRow(row: PayeeRow): Payee {
   return {
     id: row.id, kind: row.kind, bank: row.bank, key: row.key, masked: row.masked, name: row.name,
     category: row.category, nudgedAt: row.nudged_at, createdAt: row.created_at,
+  };
+}
+
+export function unparsedFromRow(row: UnparsedRow): UnparsedMessage {
+  return {
+    id: row.id, sourceHash: row.source_hash, sender: row.sender, rawBody: row.raw_body, receivedAt: row.received_at,
+    amountPaise: row.amount_paise, status: row.status, transactionId: row.transaction_id, createdAt: row.created_at,
+  };
+}
+
+export function unparsedToRow(m: UnparsedMessage): UnparsedRow {
+  return {
+    id: m.id, source_hash: m.sourceHash, sender: m.sender, raw_body: m.rawBody, received_at: m.receivedAt,
+    amount_paise: m.amountPaise, status: m.status, transaction_id: m.transactionId, created_at: m.createdAt,
   };
 }
 

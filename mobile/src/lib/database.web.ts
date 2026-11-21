@@ -1,17 +1,19 @@
-import { DEFAULT_PREFERENCES, DEFAULT_SENDERS } from './model';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from './model';
+import { DEFAULT_PREFERENCES, DEFAULT_SENDERS, NOT_A_DUPLICATE } from './model';
+import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import { DUPLICATE_WINDOW_MS, applyPatch, flagDuplicates, keepBothDecision, mergeDecision, pairKey, relinkLegacyFlags, unmergeDecision } from './duplicates';
+import type { DuplicateDecision } from './duplicates';
 import { mergeAccountKind } from './banks';
 import { identityFor, overrideKey } from './identity';
 import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
 import { parseBankSms } from './parser';
 import { validateSnapshot } from './ledger';
-import type { MoveTarget, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
+import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
-import { accountFromRow, budgetFromRow, payeeFromRow, senderFromRow, transactionFromRow, transactionToRow } from './rows';
+import { accountFromRow, budgetFromRow, payeeFromRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
 import type { AccountRow, PayeeRow, TransactionRow } from './rows';
 
-export type { MoveTarget, Snapshot } from './ledger';
+export type { IngestResult, MoveTarget, ScanBatch, Snapshot } from './ledger';
 
 // Web preview: the ledger lives in localStorage in the backup snapshot schema-2 shape
 // (storage rows, every column), so a web export restores on Android and back. The v1
@@ -23,8 +25,24 @@ function empty(): SnapshotV2 {
   return {
     schema: 2, schemaVersion: LATEST_VERSION, transactions: [], budgets: [],
     senders: DEFAULT_SENDERS.map(s => ({ address: s.address, label: s.label, enabled: Number(s.enabled) })),
-    preferences: [], accounts: [], payees: [], exportedAt: 0,
+    preferences: [], accounts: [], payees: [], unparsed_messages: [], duplicate_dismissals: [], exportedAt: 0,
   };
+}
+
+// The web twin of the migrations after v2: v3 adds the duplicate columns (defaults on
+// read) and links legacy flags the same way v2→v3 does.
+function upgrade(s: SnapshotV2): SnapshotV2 {
+  if (s.schemaVersion >= LATEST_VERSION) return s;
+  const out: SnapshotV2 = { ...s, unparsed_messages: s.unparsed_messages ?? [], duplicate_dismissals: s.duplicate_dismissals ?? [], schemaVersion: LATEST_VERSION };
+  if (s.schemaVersion < 3) {
+    const autoAddPref = s.preferences.find(p => p.key === 'autoAdd');
+    const autoAdd = autoAddPref ? JSON.parse(autoAddPref.value) !== false : true;
+    const rows = out.transactions.map(transactionFromRow);
+    const byIdMap = new Map(rows.map(t => [t.id, t]));
+    for (const patch of relinkLegacyFlags(rows, autoAdd)) byIdMap.set(patch.id, applyPatch(byIdMap.get(patch.id)!, patch, byIdMap.get(patch.id)!.updatedAt));
+    out.transactions = rows.map(t => transactionToRow(byIdMap.get(t.id)!));
+  }
+  return out;
 }
 
 function preferenceRows(preferences: Partial<Preferences>): SnapshotV2['preferences'] {
@@ -47,7 +65,7 @@ function upsertPayee(s: SnapshotV2, p: PayeeIdentity, now: number): string {
 
 // The web twin of migrations v1→v2.
 function fromV1(v1: SnapshotV1): SnapshotV2 {
-  const s: SnapshotV2 = { ...empty(), transactions: [], senders: [], preferences: preferenceRows(v1.preferences ?? {}), exportedAt: v1.exportedAt };
+  const s: SnapshotV2 = { ...empty(), schemaVersion: 2, transactions: [], senders: [], preferences: preferenceRows(v1.preferences ?? {}), exportedAt: v1.exportedAt };
   s.budgets = v1.budgets.map(b => ({ category: b.category, amount_paise: b.amountPaise }));
   s.senders = v1.senders.map(r => ({ address: r.address, label: r.label, enabled: Number(r.enabled) }));
   const ordered = [...v1.transactions].sort((a, b) => a.occurredAt - b.occurredAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
@@ -58,7 +76,7 @@ function fromV1(v1: SnapshotV1): SnapshotV2 {
       ...t, counterpartyMasked,
       accountId: account ? upsertAccount(s, account, t.createdAt) : null,
       payeeId: payee ? upsertPayee(s, payee, t.createdAt) : null,
-      payeeOverrideId: null, categoryByUser: t.status === 'manual',
+      payeeOverrideId: null, categoryByUser: t.status === 'manual', ...NOT_A_DUPLICATE,
     }));
   }
   return s;
@@ -69,12 +87,13 @@ function read(): SnapshotV2 {
   if (stored) {
     const value = validateSnapshot(JSON.parse(stored));
     if (value.schema !== 2) throw new Error('Browser ledger format is not supported.');
+    if (value.schemaVersion < LATEST_VERSION) { const upgraded = upgrade(value); write(upgraded); return upgraded; }
     return value;
   }
   const legacy = localStorage.getItem(V1_KEY);
   if (!legacy) return empty();
   const value = validateSnapshot(JSON.parse(legacy));
-  const migrated = value.schema === 1 ? fromV1(value) : value;
+  const migrated = upgrade(value.schema === 1 ? fromV1(value) : value);
   write(migrated);
   return migrated;
 }
@@ -122,7 +141,84 @@ export async function addTransaction(transaction: Transaction): Promise<boolean>
 }
 
 export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> {
-  update(s => Object.assign(row(s, id), { status, updated_at: Date.now() }));
+  const keepLink = status === 'duplicate_review' || status === 'merged';
+  update(s => {
+    const t = row(s, id);
+    Object.assign(t, { status, updated_at: Date.now() }, keepLink ? {} : { duplicate_of: null, pre_flag_status: null });
+  });
+}
+
+export async function listUnparsed(): Promise<UnparsedMessage[]> {
+  return (read().unparsed_messages ?? []).map(unparsedFromRow).sort((a, b) => b.receivedAt - a.receivedAt);
+}
+
+// Same steps as ingestScanSql. The web build has no SMS, so this only sees pasted messages.
+export async function ingestScan(batch: ScanBatch): Promise<IngestResult> {
+  const result: IngestResult = { added: 0, flagged: 0, unparsed: 0 };
+  update(s => {
+    const hashes = new Set(s.transactions.map(t => t.source_hash).filter(Boolean));
+    const ids = new Set(s.transactions.map(t => t.id));
+    const fresh: Transaction[] = [];
+    for (const t of batch.transactions) {
+      if (ids.has(t.id) || t.sourceHash && hashes.has(t.sourceHash)) continue;
+      if (t.sourceHash) hashes.add(t.sourceHash);
+      const { account, payee } = identityFor(t);
+      fresh.push({ ...t, payeeOverrideId: null,
+        accountId: account ? upsertAccount(s, account, t.createdAt) : null,
+        payeeId: payee ? upsertPayee(s, payee, t.createdAt) : null });
+    }
+    if (fresh.length) {
+      const since = Math.min(...fresh.map(t => t.occurredAt)) - DUPLICATE_WINDOW_MS;
+      const existing = s.transactions.map(transactionFromRow)
+        .filter(t => t.occurredAt >= since && ['auto', 'review', 'manual', 'duplicate_review'].includes(t.status));
+      const dismissed = new Set((s.duplicate_dismissals ?? []).map(d => pairKey(d.a_id, d.b_id)));
+      for (const t of flagDuplicates(fresh, existing, dismissed)) {
+        s.transactions.push(transactionToRow(t));
+        result.added++;
+        if (t.status === 'duplicate_review') result.flagged++;
+      }
+    }
+    s.unparsed_messages ??= [];
+    for (const m of batch.unparsed) {
+      if (s.unparsed_messages.some(u => u.source_hash === m.sourceHash)) continue;
+      s.unparsed_messages.push({ id: m.id, source_hash: m.sourceHash, sender: m.sender, raw_body: m.rawBody, received_at: m.receivedAt,
+        amount_paise: m.amountPaise, status: 'pending', transaction_id: null, created_at: Date.now() });
+      result.unparsed++;
+    }
+  });
+  return result;
+}
+
+function decide(choose: (rows: Map<string, Transaction>) => DuplicateDecision): void {
+  update(s => {
+    const rows = new Map(s.transactions.map(t => [t.id, transactionFromRow(t)]));
+    const { patches, dismiss } = choose(rows);
+    const now = Date.now();
+    for (const patch of patches) {
+      const i = s.transactions.findIndex(t => t.id === patch.id);
+      s.transactions[i] = transactionToRow(applyPatch(rows.get(patch.id)!, patch, now));
+    }
+    if (dismiss) {
+      s.duplicate_dismissals ??= [];
+      if (!s.duplicate_dismissals.some(d => d.a_id === dismiss[0] && d.b_id === dismiss[1])) s.duplicate_dismissals.push({ a_id: dismiss[0], b_id: dismiss[1], created_at: now });
+    }
+  });
+}
+
+export async function mergeDuplicate(flaggedId: string, survivorId: string): Promise<void> { decide(rows => mergeDecision(rows, flaggedId, survivorId)); }
+export async function keepBoth(id: string): Promise<void> { decide(rows => keepBothDecision(rows, id)); }
+export async function unmerge(id: string): Promise<void> { decide(rows => unmergeDecision(rows, id)); }
+
+function unparsedRow(s: SnapshotV2, id: string) {
+  const m = (s.unparsed_messages ?? []).find(u => u.id === id);
+  if (!m) throw new Error('Message not found.');
+  return m;
+}
+export async function linkUnparsed(id: string, transactionId: string): Promise<void> {
+  update(s => { const m = unparsedRow(s, id); if (m.status === 'pending') Object.assign(m, { status: 'added', transaction_id: transactionId }); });
+}
+export async function dismissUnparsed(id: string): Promise<void> {
+  update(s => Object.assign(unparsedRow(s, id), { status: 'dismissed', raw_body: '' }));
 }
 export async function setTransactionCategory(id: string, category: Category): Promise<void> {
   update(s => Object.assign(row(s, id), { category, category_by_user: 1, updated_at: Date.now() }));
@@ -215,5 +311,5 @@ export async function savePreference<K extends keyof Preferences>(key: K, value:
 export async function exportSnapshot(): Promise<SnapshotV2> { return { ...read(), schemaVersion: LATEST_VERSION, exportedAt: Date.now() }; }
 export async function restoreSnapshot(input: Snapshot): Promise<void> {
   const snapshot = validateSnapshot(input);
-  write(snapshot.schema === 1 ? fromV1(snapshot) : { ...snapshot, schemaVersion: LATEST_VERSION });
+  write(upgrade(snapshot.schema === 1 ? fromV1(snapshot) : snapshot));
 }

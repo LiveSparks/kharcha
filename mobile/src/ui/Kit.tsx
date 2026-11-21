@@ -155,7 +155,7 @@ export function SmsSlip({ transaction, actions }: { transaction: Transaction; ac
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <CategoryChip category={categoryOf(transaction)} />
-        <Caption style={{ color: transaction.status === 'review' ? p.review : p.leaf }}>{transaction.status === 'review' ? 'Needs review' : transaction.status === 'ignored' ? 'Ignored' : 'In ledger'}</Caption>
+        <Caption style={{ color: transaction.status === 'review' ? p.review : p.leaf }}>{transaction.status === 'review' ? 'Needs review' : transaction.status === 'ignored' ? 'Ignored' : transaction.status === 'duplicate_review' ? 'Possible duplicate' : transaction.status === 'merged' ? 'Merged copy' : 'In ledger'}</Caption>
       </View>
       {actions ? <View style={{ marginTop: 7 }}>{actions}</View> : null}
     </View>

@@ -2,13 +2,16 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState, Platform } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
-  addTransaction, exportSnapshot, getDatabase, linkDebitCard, listAccounts, listBudgets, listPayees, listSenders,
-  listTransactions, loadPreferences, markPayeeNudged, movePayee, removeBudget, removeSender, renameAccount,
-  renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender, setTransactionCategory, setTransactionStatus,
+  addTransaction, dismissUnparsed, exportSnapshot, getDatabase, ingestScan, keepBoth, linkDebitCard, linkUnparsed, listAccounts,
+  listBudgets, listPayees, listSenders, listTransactions, listUnparsed, loadPreferences, markPayeeNudged, mergeDuplicate, movePayee,
+  removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
+  setTransactionCategory, setTransactionStatus, unmerge,
 } from '@/lib/database';
 import type { MoveTarget, Snapshot } from '@/lib/database';
-import { DEFAULT_PREFERENCES } from '@/lib/model';
-import type { Account, Budget, Category, Direction, Payee, Preferences, SenderRule, Transaction, TransactionStatus } from '@/lib/model';
+import { DEFAULT_PREFERENCES, NOT_A_DUPLICATE } from '@/lib/model';
+import type { Account, Budget, Category, Direction, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
+import { duplicatePairs } from '@/lib/duplicates';
+import type { DuplicatePair } from '@/lib/duplicates';
 import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
 import type { PayeeStats } from '@/lib/resolve';
 import { readBankSms, requestSmsPermission } from '@/lib/sms';
@@ -28,13 +31,21 @@ interface LedgerContextValue {
   categoryOf: (t: Transaction) => Category;
   payeeOf: (t: Transaction) => Payee | null;
   accountOf: (t: Transaction) => Account | null;
+  // Duplicate review and Couldn't read (P2).
+  pairs: DuplicatePair[];
+  unparsed: UnparsedMessage[];
   budgets: Budget[];
   senders: SenderRule[];
   preferences: Preferences;
   refresh: () => Promise<void>;
   scan: (full?: boolean) => Promise<number>;
   enableSms: () => Promise<boolean>;
-  addManual: (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt?: number) => Promise<void>;
+  addManual: (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt?: number) => Promise<string>;
+  addFromUnparsed: (unparsedId: string, merchant: string, rupees: number, direction: Direction, category: Category, occurredAt: number) => Promise<void>;
+  mergeDuplicate: (flaggedId: string, survivorId: string) => Promise<void>;
+  keepBoth: (id: string) => Promise<void>;
+  unmerge: (id: string) => Promise<void>;
+  dismissUnparsed: (id: string) => Promise<void>;
   setTransactionStatus: (id: string, status: TransactionStatus) => Promise<void>;
   setTransactionCategory: (id: string, category: Category) => Promise<void>;
   movePayee: (id: string, target: MoveTarget) => Promise<string>;
@@ -64,16 +75,18 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
+  const [unparsed, setUnparsed] = useState<UnparsedMessage[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [senders, setSenders] = useState<SenderRule[]>([]);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const scanBusyRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    const [nextTransactions, nextAccounts, nextPayees, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
-      listTransactions(), listAccounts(), listPayees(), listBudgets(), listSenders(), loadPreferences(),
+    const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
+      listTransactions(), listAccounts(), listPayees(), listUnparsed(), listBudgets(), listSenders(), loadPreferences(),
     ]);
     setTransactions(nextTransactions);
+    setUnparsed(nextUnparsed);
     setAccounts(nextAccounts);
     setPayees(nextPayees);
     setBudgets(nextBudgets);
@@ -96,9 +109,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const since = scanStart(full, preferences.lastScanAt);
-      const candidates = await readBankSms(senders, since, preferences.autoAdd);
-      let added = 0;
-      for (const candidate of candidates) if (await addTransaction(candidate)) added++;
+      // Flagging runs at ingest against the ledger, so a copy that lands in a later
+      // scan than its original is still caught (WF-5).
+      const { added } = await ingestScan(await readBankSms(senders, since, preferences.autoAdd));
       await savePreference('lastScanAt', Date.now());
       await refresh();
       return added;
@@ -134,13 +147,21 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     const amountPaise = Math.round(rupees * 100);
     if (!merchant.trim() || !Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a merchant and an amount above zero.');
     const now = Date.now();
-    await addTransaction({ id: randomUUID(), sourceHash: null, sender: null, rawBody: null,
+    const id = randomUUID();
+    await addTransaction({ id, sourceHash: null, sender: null, rawBody: null,
       occurredAt, merchant: merchant.trim(), amountPaise, direction, category,
       status: 'manual', accountLast4: null, counterpartyMasked: null, counterpartyLast4: null,
       reference: null, confidence: 1, createdAt: now, updatedAt: now,
-      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: true });
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: true, ...NOT_A_DUPLICATE });
     await refresh();
+    return id;
   }, [refresh]);
+
+  const addFromUnparsed = useCallback(async (unparsedId: string, merchant: string, rupees: number, direction: Direction, category: Category, occurredAt: number) => {
+    const id = await addManual(merchant, rupees, direction, category, occurredAt);
+    await linkUnparsed(unparsedId, id);
+    await refresh();
+  }, [addManual, refresh]);
 
   // Every mutation is a stored decision followed by a re-read; labels, categories and
   // suggestions recompute from the new revision.
@@ -158,6 +179,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       markPayeeNudged: after(markPayeeNudged),
       renameAccount: after(renameAccount),
       linkDebitCard: after(linkDebitCard),
+      mergeDuplicate: after(mergeDuplicate),
+      keepBoth: after(keepBoth),
+      unmerge: after(unmerge),
+      dismissUnparsed: after(dismissUnparsed),
     };
   }, [refresh]);
 
@@ -170,6 +195,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       categoryOf: (t: Transaction) => effectiveCategory(t, payeesById),
       payeeOf: (t: Transaction) => { const id = effectivePayeeId(t); return (id && payeesById.get(id)) || null; },
       accountOf: (t: Transaction) => (t.accountId && accountsById.get(t.accountId)) || null,
+      pairs: duplicatePairs(transactions),
     };
   }, [transactions, payees, accounts]);
 
@@ -185,15 +211,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<LedgerContextValue>(() => ({
-    ready, busy, error, transactions, accounts, payees, ...resolved, budgets, senders, preferences, refresh, scan, enableSms,
-    addManual, ...mutations, setBudget: changeBudget,
+    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, budgets, senders, preferences, refresh, scan, enableSms,
+    addManual, addFromUnparsed, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
     setSender: async sender => { await saveSender(sender); await refresh(); },
     removeSender: async address => { await removeSender(address); await refresh(); },
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, accounts, payees, resolved, budgets, senders, preferences, refresh, scan, enableSms, addManual, mutations, changeBudget, changePreference]);
+  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
 
   return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
 }

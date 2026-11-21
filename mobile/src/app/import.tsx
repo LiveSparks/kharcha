@@ -5,8 +5,9 @@ import * as Crypto from 'expo-crypto';
 import { Action, Body, Caption, Screen, ScreenHead, SmsSlip } from '@/ui/Kit';
 import { Field, Note } from '@/ui/Forms';
 import { parseBankSms, occurredAtFrom } from '@/lib/parser';
-import { addTransaction } from '@/lib/database';
+import { ingestScan } from '@/lib/database';
 import { useLedger } from '@/state/LedgerProvider';
+import { NOT_A_DUPLICATE } from '@/lib/model';
 import type { Transaction } from '@/lib/model';
 import { showMessage } from '@/ui/dialog';
 
@@ -27,12 +28,12 @@ export default function ImportSms() {
       status: 'review', accountLast4: parsed.accountLast4, reference: parsed.reference,
       counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
       confidence: parsed.confidence, createdAt: now, updatedAt: now,
-      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false });
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, ...NOT_A_DUPLICATE });
   }
   async function save() {
     if (!candidate) return;
     setBusy(true);
-    try { const added = await addTransaction(candidate); await refresh(); if (!added) showMessage('Already in your ledger', 'This message was already imported.'); router.replace('/(tabs)/inbox'); }
+    try { const { added } = await ingestScan({ transactions: [candidate], unparsed: [] }); await refresh(); if (!added) showMessage('Already in your ledger', 'This message was already imported.'); router.replace('/(tabs)/inbox'); }
     catch (e) { showMessage('Could not save', e instanceof Error ? e.message : 'Try again.'); }
     finally { setBusy(false); }
   }
