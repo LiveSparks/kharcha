@@ -196,6 +196,11 @@ export async function renamePayeeSql(db: SqlExecutor, id: string, name: string |
   else await db.runAsync('UPDATE payees SET name=?, category=? WHERE id=?', clean, category, id);
 }
 
+// *Not a habit* (P5): set or clear on every payee of one display group at once.
+export async function setHabitHiddenSql(db: SqlExecutor, ids: readonly string[], hidden: boolean): Promise<void> {
+  for (const id of ids) await db.runAsync('UPDATE payees SET habit_hidden=? WHERE id=?', hidden ? 1 : 0, id);
+}
+
 export async function markPayeeNudgedSql(db: SqlExecutor, id: string, at: number = Date.now()): Promise<void> {
   await db.runAsync('UPDATE payees SET nudged_at=? WHERE id=? AND nudged_at IS NULL', at, id);
 }

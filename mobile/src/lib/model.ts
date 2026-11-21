@@ -95,6 +95,8 @@ export interface Payee {
   category: Category | null;
   nudgedAt: number | null;
   createdAt: number;
+  // *Not a habit* (schema v6, P5): the payee's group never shows as a Habit.
+  habitHidden: boolean;
 }
 
 // Schedules (P4, WF-6). Only decisions are stored: a confirmed Schedule's terms, or a

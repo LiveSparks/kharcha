@@ -48,6 +48,7 @@ export interface AccountRow {
 export interface PayeeRow {
   id: string; kind: Payee['kind']; bank: string; key: string; masked: string | null;
   name: string | null; category: Category | null; nudged_at: number | null; created_at: number;
+  habit_hidden?: number;
 }
 
 export interface UnparsedRow {
@@ -111,7 +112,7 @@ export function accountFromRow(row: AccountRow): Account {
 export function payeeFromRow(row: PayeeRow): Payee {
   return {
     id: row.id, kind: row.kind, bank: row.bank, key: row.key, masked: row.masked, name: row.name,
-    category: row.category, nudgedAt: row.nudged_at, createdAt: row.created_at,
+    category: row.category, nudgedAt: row.nudged_at, createdAt: row.created_at, habitHidden: !!row.habit_hidden,
   };
 }
 

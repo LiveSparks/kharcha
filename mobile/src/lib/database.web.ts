@@ -52,6 +52,8 @@ function upgrade(s: SnapshotV2): SnapshotV2 {
     });
     out.accounts = out.accounts.map(a => ({ opening_balance_paise: null, opening_balance_at: null, credit_limit_paise: null, ...a }));
   }
+  // v5 → v6 twin: *Not a habit* defaults off.
+  out.payees = out.payees.map(p => ({ habit_hidden: 0, ...p }));
   return out;
 }
 
@@ -69,7 +71,7 @@ function upsertAccount(s: SnapshotV2, a: AccountIdentity, now: number): string {
 function upsertPayee(s: SnapshotV2, p: PayeeIdentity, now: number): string {
   const existing = s.payees.find(row => row.kind === p.kind && row.bank === p.bank && row.key === p.key);
   if (existing) return existing.id;
-  s.payees.push({ id: p.id, kind: p.kind, bank: p.bank, key: p.key, masked: p.masked, name: null, category: null, nudged_at: null, created_at: now });
+  s.payees.push({ id: p.id, kind: p.kind, bank: p.bank, key: p.key, masked: p.masked, name: null, category: null, nudged_at: null, created_at: now, habit_hidden: 0 });
   return p.id;
 }
 
@@ -252,7 +254,7 @@ export async function movePayee(id: string, target: MoveTarget): Promise<string>
       const baseKey = (base?.key ?? name.toLowerCase()).replace(/#\d+$/, '');
       const key = overrideKey(baseKey, s.payees.filter(p => p.kind === kind && p.bank === bank).map(p => p.key));
       targetId = `payee:${kind}:${bank}:${key}`;
-      s.payees.push({ id: targetId, kind, bank, key, masked: base?.masked ?? name, name, category: null, nudged_at: null, created_at: Date.now() });
+      s.payees.push({ id: targetId, kind, bank, key, masked: base?.masked ?? name, name, category: null, nudged_at: null, created_at: Date.now(), habit_hidden: 0 });
     }
     Object.assign(t, { payee_override_id: targetId === t.payee_id ? null : targetId, updated_at: Date.now() });
     result = targetId;
@@ -274,6 +276,9 @@ function account(s: SnapshotV2, id: string): AccountRow {
 export async function renamePayee(id: string, name: string | null, category?: Category | null): Promise<void> {
   const clean = name === null ? null : validateName(name);
   update(s => { const p = payee(s, id); p.name = clean; if (category !== undefined) p.category = category; });
+}
+export async function setHabitHidden(ids: readonly string[], hidden: boolean): Promise<void> {
+  update(s => { for (const id of ids) payee(s, id).habit_hidden = hidden ? 1 : 0; });
 }
 export async function markPayeeNudged(id: string): Promise<void> {
   update(s => { const p = payee(s, id); p.nudged_at ??= Date.now(); });

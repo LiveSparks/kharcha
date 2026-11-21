@@ -6,7 +6,7 @@ import {
   listBudgets, listPayees, listSenders, listTransactions, listUnparsed, loadPreferences, markPayeeNudged, mergeDuplicate, movePayee,
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
   setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, unmerge,
-  addSchedule, endSchedule, listSchedules, updateScheduleTerms,
+  addSchedule, endSchedule, listSchedules, updateScheduleTerms, setHabitHidden,
 } from '@/lib/database';
 import type { MoveTarget, ScheduleTerms, Snapshot } from '@/lib/database';
 import { DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
@@ -15,6 +15,8 @@ import { computeBalances, netWorth } from '@/lib/balances';
 import type { AccountBalance } from '@/lib/balances';
 import { detectSeries, matchSchedules, suggestionsFrom } from '@/lib/schedules';
 import type { ScheduleDraft, ScheduleMatches, SeriesCandidate } from '@/lib/schedules';
+import { detectHabits } from '@/lib/habits';
+import type { Habit } from '@/lib/habits';
 import { duplicatePairs } from '@/lib/duplicates';
 import type { DuplicatePair } from '@/lib/duplicates';
 import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
@@ -50,6 +52,11 @@ interface LedgerContextValue {
   dismissSuggestion: (candidate: SeriesCandidate) => Promise<void>;
   updateScheduleTerms: (id: string, terms: ScheduleTerms) => Promise<void>;
   endSchedule: (id: string) => Promise<void>;
+  // Habits (P5): computed on read; *Not a habit* is the only stored decision.
+  habits: Habit[];
+  // The "now" detection ran at (the last ledger read); Habit wording is relative to it.
+  asOf: number;
+  setHabitHidden: (payeeIds: readonly string[], hidden: boolean) => Promise<void>;
   budgets: Budget[];
   senders: SenderRule[];
   preferences: Preferences;
@@ -230,6 +237,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       dismissSuggestion: after(dismissSuggestionWrite),
       updateScheduleTerms: after(updateScheduleTerms),
       endSchedule: after(endSchedule),
+      setHabitHidden: after(setHabitHidden),
     };
   }, [refresh]);
 
@@ -251,11 +259,14 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   // merges and unmerges all go through refresh (spec §5.4 re-run triggers).
   const scheduling = useMemo(() => {
     const candidates = detectSeries(transactions, resolved.payeesById, revisionAt);
+    const scheduleMatches = matchSchedules(transactions, schedules, resolved.payeesById, revisionAt);
     return {
       suggestions: suggestionsFrom(candidates, schedules, resolved.payeesById),
-      scheduleMatches: matchSchedules(transactions, schedules, resolved.payeesById, revisionAt),
+      scheduleMatches,
+      // Schedule wins per row (WF-7): matched rows are removed before Habit counting.
+      habits: detectHabits(transactions, scheduleMatches, resolved.payeesById, accounts, revisionAt),
     };
-  }, [transactions, schedules, resolved, revisionAt]);
+  }, [transactions, schedules, resolved, accounts, revisionAt]);
 
   const changeBudget = useCallback(async (category: Category, amountPaise: number) => {
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a budget above zero.');
@@ -269,7 +280,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<LedgerContextValue>(() => ({
-    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, budgets, senders, preferences, refresh, scan, enableSms,
+    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, asOf: revisionAt, budgets, senders, preferences, refresh, scan, enableSms,
     addManual, addFromUnparsed, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
     setSender: async sender => { await saveSender(sender); await refresh(); },
@@ -277,7 +288,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
+  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
 
   return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
 }

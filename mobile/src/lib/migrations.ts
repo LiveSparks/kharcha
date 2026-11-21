@@ -264,7 +264,14 @@ export async function addSchedules(tx: SqlExecutor): Promise<void> {
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules];
+// Habits (P5, spec §4.2): the only stored Habit decision is *Not a habit* on a payee.
+export async function addHabitHidden(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  await tx.execAsync('ALTER TABLE payees ADD COLUMN habit_hidden INTEGER NOT NULL DEFAULT 0');
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden];
 
 export const LATEST_VERSION = migrations.length + 1;
 

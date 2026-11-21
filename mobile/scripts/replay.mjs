@@ -24,12 +24,13 @@ import { DEFAULT_SENDERS } from '../src/lib/model.ts';
 import { bankFamily } from '../src/lib/banks.ts';
 import { LATEST_VERSION, V1_SCHEMA, migrate, readVersion } from '../src/lib/migrations.ts';
 import { ingestScanSql, listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, renamePayeeSql } from '../src/lib/ledger.ts';
-import { detectSeries } from '../src/lib/schedules.ts';
+import { detectSeries, draftFromCandidate, matchSchedules } from '../src/lib/schedules.ts';
+import { detectHabits, ownTransferDebits, selfTransferPayees } from '../src/lib/habits.ts';
 import { v1TransactionRow } from '../src/lib/rows.ts';
 import { computeBalance, largeGap } from '../src/lib/balances.ts';
 import { byId, debitCardSuggestions, effectivePayeeId, namingNudge, payeeLabel, payeeStats, unnamedCount } from '../src/lib/resolve.ts';
 
-const PHASE = 'P4';
+const PHASE = 'P5';
 const LATEST = LATEST_VERSION;
 // P4: a payee that must never be a Schedule (the frequent grocer, WF-6). Its real name
 // lives in the private pseudonym key, so the gate session passes it in.
@@ -214,6 +215,10 @@ const figures = rows => rows.map(t => `${t.id}|${t.reportedBalancePaise}|${t.rep
 check(figures(rowsA) === figures(rowsB), 'upgrade backfill and scan ingest disagree on stated balances/limits');
 // The doc digits the gate names → the corpus's real ones (private key, outside the repo).
 const pseudonyms = new Map();
+const names = new Map();
+if (process.env.KHARCHA_PSEUDONYMS && existsSync(process.env.KHARCHA_PSEUDONYMS)) {
+  for (const m of readFileSync(process.env.KHARCHA_PSEUDONYMS, 'utf8').matchAll(/^\| `([^`]+)` \| `([^`]+)` \|/gm)) names.set(m[1], m[2]);
+}
 if (process.env.KHARCHA_PSEUDONYMS && existsSync(process.env.KHARCHA_PSEUDONYMS)) {
   for (const m of readFileSync(process.env.KHARCHA_PSEUDONYMS, 'utf8').matchAll(/^\| `\D*(\d{4})` \| `\D*(\d{4})` \|/gm)) pseudonyms.set(m[1], m[2]);
 }
@@ -274,6 +279,44 @@ check(named.filter(c => c.lapsed).length === 3, `expected 3 lapsed candidates, g
 check(candidates.length === named.length + 1, `unnamed, Workspace should show as an old and a new series: ${candidates.length} candidates`);
 if (notASchedule) check(![...candidates.map(c => describe(c, payeeMapB)), ...named].some(c => notASchedule.test(c.payee)), 'the frequent-merchant payee was detected as a schedule');
 
+// P5: Habits, as of the last message, on the Workspace-named payees. The 180-day view is
+// WF-7's evidence window; the app itself counts the trailing 365 days.
+const DAY_MS = 86_400_000;
+const habitView = h => ({ label: h.label, count: h.count, perMonthRs: Math.round(h.perMonthPaise / 100), last: new Date(h.lastAt).toISOString().slice(0, 10), state: h.state });
+const noSchedules = { matches: new Map() };
+// Named targets: doc names translate through the private key (real names never live here).
+const realName = doc => names.get(doc) ?? doc;
+const has = (hs, doc) => hs.some(h => h.label.toLowerCase().includes(realName(doc).toLowerCase()));
+// Rules alone: no user decision beyond the Workspace naming. Own-account transfers
+// (the own UPI handle, card bills paid through an app) are found by debit/credit pairing.
+const habitPayees = namedPayees;
+const habitsByRules = detectHabits(rowsB, noSchedules, habitPayees, accountsB, replayNow);
+const pairedTransfers = ownTransferDebits(rowsB);
+const selfPayees = selfTransferPayees(rowsB, pairedTransfers);
+const habits = detectHabits(rowsB, noSchedules, habitPayees, accountsB, replayNow);
+const habits180 = detectHabits(rowsB.filter(t => t.occurredAt >= replayNow - 180 * DAY_MS), noSchedules, habitPayees, accountsB, replayNow);
+const habitsA = detectHabits(rowsA, noSchedules, habitPayees, accountsA, replayNow);
+check(JSON.stringify(habitsA.map(habitView)) === JSON.stringify(habits.map(habitView)), 'upgrade and ingest detect different habits');
+// Tracking every active suggestion: none of the matched rows may be Habit evidence.
+const tracked5 = named.length ? detectSeries(rowsB, habitPayees, replayNow).filter(c => !c.lapsed)
+  .map((c, i) => ({ ...draftFromCandidate(c), id: `replay-s${i}`, status: 'active', createdAt: c.firstHitAt, decidedAt: replayNow })) : [];
+const trackedMatches = matchSchedules(rowsB, tracked5, habitPayees, replayNow);
+const habitsTracked = detectHabits(rowsB, trackedMatches, habitPayees, accountsB, replayNow);
+const countOf = (hs, label) => hs.find(h => h.label === label)?.count ?? 0;
+const shrunk = habits.filter(h => countOf(habitsTracked, h.label) < h.count).map(h => ({ label: h.label, untracked: h.count, tracked: countOf(habitsTracked, h.label) }));
+check(trackedMatches.matches.size > 0 && shrunk.length > 0, 'tracking the active Schedules changed no Habit count');
+for (const h of habitsTracked) {
+  const evidence = rowsB.filter(t => t.direction === 'debit' && h.payeeIds.includes(t.payeeOverrideId ?? t.payeeId) && t.occurredAt >= replayNow - 365 * DAY_MS && !trackedMatches.matches.has(t.id) && !pairedTransfers.has(t.id) && ['auto', 'review', 'manual'].includes(t.status));
+  check(evidence.length === h.count, `${h.label}: Habit count ${h.count} ≠ unmatched debits ${evidence.length}`);
+}
+for (const doc of ['Fresh Mart', 'Blinkit']) check(has(habits180, doc), `180-day habits are missing ${doc}`);
+check(!habitsByRules.some(h => /unknown merchant/i.test(h.label)), 'UNKNOWN MERCHANT formed a Habit');
+for (const doc of ['ARJUN MEHTA', 'ICICI BANK CREDIT CARD']) check(!has(habitsByRules, doc), `${doc} (self-transfer or card bill) formed a Habit by the rules alone`);
+if (names.size) check([...selfPayees].some(id => payeeLabel(habitPayees.get(id)).toLowerCase() === realName('ARJUNMEHTA-2@OKICICI').toLowerCase()), 'the own UPI handle is not a self-transfer payee');
+const ownLast4 = new Set(accountsB.map(a => a.last4));
+check(!habitsByRules.some(h => h.payeeIds.some(id => { const p = namedPayees.get(id); return p?.kind === 'masked' && ownLast4.has(p.key); })), 'a transfer to an own account formed a Habit');
+check(!has(habitsByRules, 'ARJUNMEHTA-2@OKICICI'), 'the own UPI handle formed a Habit');
+
 const stats = payeeStats(rowsA);
 const nudge = namingNudge(payeesA, stats);
 const summary = {
@@ -304,13 +347,20 @@ const summary = {
     workspacePayees: workspace.length, workspaceNamed: workspaceSeries,
     notAScheduleChecked: !!notASchedule,
   },
+  habits: {
+    ownTransfers: { pairedDebits: pairedTransfers.size, selfPayees: [...selfPayees].map(id => payeeLabel(habitPayees.get(id))).sort() },
+    total: habits.length, active: habits.filter(h => h.state === 'active').length, faded: habits.filter(h => h.state === 'faded').length,
+    trailing180: habits180.map(habitView), all: habits.map(habitView),
+    withActiveSchedulesTracked: { schedules: tracked5.length, matchedRows: trackedMatches.matches.size, habits: habitsTracked.length, shrunk },
+    namedTargetsTranslated: names.size > 0,
+  },
   couldntRead: { count: unread.length, bySender: Object.fromEntries([...new Set(unread.map(m => bankFamily(m.sender)))].sort().map(f => [f, unread.filter(m => bankFamily(m.sender) === f).length])) },
   failures,
 };
 
 // Baseline: the first run records it; later runs must not move.
 const baselinePath = join(out, `baseline-${PHASE}.json`);
-const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead, balances: s.balances, schedules: s.schedules });
+const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead, balances: s.balances, schedules: s.schedules, habits: s.habits });
 if (!existsSync(baselinePath)) {
   if (!failures.length) writeFileSync(baselinePath, `${JSON.stringify(tracked(summary), null, 2)}\n`);
   summary.baseline = failures.length ? 'not written (targets failed)' : `written ${baselinePath}`;

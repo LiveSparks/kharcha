@@ -6,6 +6,8 @@ import { money } from '@/lib/format';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { isLive } from '@/lib/resolve';
+import { HabitLine } from '@/ui/Habits';
+import type { Habit } from '@/lib/habits';
 
 type Period = 'Week' | 'Month' | 'Year';
 function periodStart(period: Period): number {
@@ -19,7 +21,7 @@ function periodStart(period: Period): number {
 
 export default function Insights() {
   const p = usePalette();
-  const { transactions, categoryOf } = useLedger();
+  const { transactions, categoryOf, habits, asOf } = useLedger();
   const [period, setPeriod] = useState<Period>('Month');
   const data = useMemo(() => {
     const totals = Object.fromEntries(CATEGORIES.map(c => [c, 0])) as Record<typeof CATEGORIES[number], number>;
@@ -43,7 +45,29 @@ export default function Insights() {
         {data.categories.map(row => <View key={row.category} style={{ paddingVertical: 15, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: p.line }}><CategoryDot category={row.category} size={11} /><Text style={{ flex: 1, fontFamily: fonts.bodyMedium, color: p.ink }}>{row.category}</Text><Text style={{ fontFamily: fonts.mono, color: p.ink }}>{money(row.amount)}</Text><Text style={{ fontFamily: fonts.body, color: p.muted, width: 34, textAlign: 'right' }}>{Math.round(row.amount / total * 100)}%</Text></View>)}
       </View>
     </> : <EmptyState title="Your picture will grow" detail="Once you add an expense, its category will show here." />}
+    <HabitsSection habits={habits} now={asOf} />
   </Screen>;
+}
+
+// Habits (P5, WF-7): repeated spending at one payee over the past year, Active ones by
+// their last 90 days of spend, Faded ones folded away below.
+function HabitsSection({ habits, now }: { habits: Habit[]; now: number }) {
+  const p = usePalette();
+  const [showFaded, setShowFaded] = useState(false);
+  const active = habits.filter(h => h.state === 'active');
+  const faded = habits.filter(h => h.state === 'faded');
+  if (!habits.length) return null;
+  return <View style={{ marginTop: 33 }}>
+    <SectionTitle>Habits</SectionTitle>
+    <Text style={{ fontFamily: fonts.body, color: p.muted, fontSize: 13, marginTop: 3 }}>Places you keep spending at, from the past year</Text>
+    <View style={{ marginTop: 6 }}>{active.map(h => <HabitLine key={h.groupKey} habit={h} now={now} />)}</View>
+    {faded.length ? <>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: showFaded }} onPress={() => setShowFaded(v => !v)} style={{ paddingVertical: 13 }}>
+        <Text style={{ fontFamily: fonts.bodyMedium, color: p.muted }}>{showFaded ? '▾' : '▸'} Faded ({faded.length})</Text>
+      </Pressable>
+      {showFaded ? faded.map(h => <HabitLine key={h.groupKey} habit={h} now={now} />) : null}
+    </> : null}
+  </View>;
 }
 
 function categoryColor(category: string) {

@@ -13,6 +13,7 @@ import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
 import { ScheduleBadge } from '@/ui/Schedules';
+import { HabitChip } from '@/ui/Habits';
 import { scheduleFor } from '@/lib/schedules';
 
 function TransactionSummary({ transaction: t }: { transaction: Transaction }) {
@@ -95,7 +96,7 @@ function PayeeRow({ transaction: t }: { transaction: Transaction }) {
         <Caption>{t.direction === 'debit' ? 'Paid to' : 'Received from'}</Caption>
         <Label style={{ fontSize: 16, marginTop: 2 }}><Text numberOfLines={2}>{payee ? payeeLabel(payee) : t.merchant}</Text></Label>
         {payee?.name ? <Caption numberOfLines={1}>{payee.kind === 'masked' ? `a/c ${payee.masked ?? ''}` : payee.masked ?? payee.key}</Caption> : null}
-        {payee ? <ScheduleBadge payee={payee} /> : null}
+        {payee ? <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}><ScheduleBadge payee={payee} /><HabitChip payee={payee} /></View> : null}
       </View>
       {payee ? <Action compact variant="secondary" title={payee.name ? 'Rename' : 'Name'} onPress={() => router.push({ pathname: '/name', params: { kind: 'payee', id: payee.id } })} /> : null}
     </View>

@@ -461,6 +461,13 @@ are no notifications.
   `counterparty_last4` (with bank, when known) equals one of the user's `accounts.last4`;
   payees whose name equals an account name; payments to a `credit_card` account;
   `habit_hidden` payees.
+- **Own-account transfers [P5 gate, operator 2026-11-21]:** a debit paired with a Live
+  credit of the same amount on a *different* own account, landing from 2 min before to
+  30 min after it (each credit pairs once, nearest first), is never counted. A payee with
+  ≥ 2 paired debits making up at least half its Live debits is a self-transfer payee, and
+  none of its rows count. This catches the own UPI handle and name-style payees that carry
+  no last4, and card bills paid through an app (the card's credit SMS is the pair).
+  *Not a habit* stays the manual escape hatch.
 - Threshold: ≥ 4 spends across ≥ 3 calendar months within the trailing 365 days. Amount
   isn't checked.
 - State: Active when the last spend is ≤ 60 days ago, otherwise Faded.

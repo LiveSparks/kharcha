@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { View } from 'react-native';
+import { Switch, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Action, Body, Caption, Screen, ScreenHead } from '@/ui/Kit';
 import { Field, Note, OptionalCategoryPicker } from '@/ui/Forms';
 import { accountDefaultLabel, effectivePayeeId, isLive, payeeDefaultLabel, payeeReach, validateName } from '@/lib/resolve';
 import { scheduleFor } from '@/lib/schedules';
+import { groupMembers, isHabitHidden } from '@/lib/habits';
+import { usePalette } from '@/ui/theme';
 import type { Category } from '@/lib/model';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
@@ -14,7 +16,8 @@ import { showMessage } from '@/ui/dialog';
 // default label back everywhere.
 export default function NameSheet() {
   const { kind, id } = useLocalSearchParams<{ kind: 'payee' | 'account'; id: string }>();
-  const { payeesById, accountsById, transactions, scheduleMatches, renamePayee, renameAccount } = useLedger();
+  const p = usePalette();
+  const { payees, payeesById, accountsById, transactions, scheduleMatches, renamePayee, renameAccount, setHabitHidden } = useLedger();
   const payee = kind === 'payee' ? payeesById.get(id) : undefined;
   const account = kind === 'account' ? accountsById.get(id) : undefined;
   const current = payee ?? account;
@@ -27,6 +30,15 @@ export default function NameSheet() {
   // Track as schedule (P4): prefilled from this payee's latest row, unless already tracked.
   const latest = payee && !scheduleFor(payee, scheduleMatches.state.values(), payeesById)
     ? transactions.find(t => isLive(t) && effectivePayeeId(t) === payee.id) : undefined;
+
+  // Not a habit (P5): stored on every payee of this display group, so a variant
+  // merchant string can't keep the Habit alive. Applies at once, like a toggle.
+  const hidden = payee ? isHabitHidden(payee, payees) : false;
+  async function toggleHabit(value: boolean) {
+    if (!payee) return;
+    try { await setHabitHidden(groupMembers(payee, payees), value); }
+    catch (e) { showMessage('Could not save', e instanceof Error ? e.message : 'Try again.'); }
+  }
 
   async function save(clear = false) {
     let clean: string | null;
@@ -50,6 +62,10 @@ export default function NameSheet() {
       <Note>Applies to {reach} past and all future transactions.{payee ? ' Rows you categorised by hand keep their category.' : ''}</Note>
       <Action title={busy ? 'Saving…' : 'Save'} disabled={busy} onPress={() => void save()} />
       {current.name ? <Action title="Clear name" variant="ghost" disabled={busy} onPress={() => void save(true)} /> : null}
+      {payee ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ flex: 1 }}><Body>Not a habit</Body><Caption>Leave this payee out of Habits in Insights</Caption></View>
+        <Switch accessibilityLabel="Not a habit" value={hidden} onValueChange={v => void toggleHabit(v)} trackColor={{ false: p.line, true: p.leaf }} thumbColor={hidden ? p.onLeaf : p.muted} />
+      </View> : null}
       {latest ? <Action title="Track as schedule" variant="secondary" disabled={busy} onPress={() => router.push({ pathname: '/schedule', params: { from: latest.id } })} /> : null}
     </View>
   </Screen>;

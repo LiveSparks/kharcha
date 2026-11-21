@@ -5,7 +5,7 @@ import { V1_SCHEMA, migrate } from './migrations';
 import type { SqlDatabase } from './migrations';
 import {
   dismissUnparsedSql, exportSnapshotSql, ingestScanSql, insertTransaction, keepBothSql, linkDebitCardSql, linkUnparsedSql,
-  listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, movePayeeSql,
+  listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, setHabitHiddenSql, movePayeeSql,
   renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
   endScheduleSql, insertScheduleSql, listScheduleRows, updateScheduleTermsSql,
 } from './ledger';
@@ -59,6 +59,7 @@ export async function setTransactionCategory(id: string, category: Category): Pr
 export async function movePayee(id: string, target: MoveTarget): Promise<string> { return movePayeeSql(await ledger(), id, target); }
 export async function renamePayee(id: string, name: string | null, category?: Category | null): Promise<void> { await renamePayeeSql(await ledger(), id, name, category); }
 export async function markPayeeNudged(id: string): Promise<void> { await markPayeeNudgedSql(await ledger(), id); }
+export async function setHabitHidden(ids: readonly string[], hidden: boolean): Promise<void> { await setHabitHiddenSql(await ledger(), ids, hidden); }
 export async function renameAccount(id: string, name: string | null): Promise<void> { await renameAccountSql(await ledger(), id, name); }
 export async function setOpeningBalance(id: string, paise: number | null, at: number = Date.now()): Promise<void> { await setOpeningBalanceSql(await ledger(), id, paise, at); }
 export async function setCreditLimit(id: string, paise: number | null): Promise<void> { await setCreditLimitSql(await ledger(), id, paise); }
