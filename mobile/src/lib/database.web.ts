@@ -8,7 +8,7 @@ import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
 import { parseBankSms, reportedFigures } from './parser';
 import { validateSnapshot, validPaise } from './ledger';
-import type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
+import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
 import { accountFromRow, budgetFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
 import { validateTerms } from './schedules';
@@ -166,7 +166,8 @@ export async function listUnparsed(): Promise<UnparsedMessage[]> {
 }
 
 // Same steps as ingestScanSql. The web build has no SMS, so this only sees pasted messages.
-export async function ingestScan(batch: ScanBatch): Promise<IngestResult> {
+// No progress on web: a pasted batch is a message or two.
+export async function ingestScan(batch: ScanBatch, _onProgress?: (progress: IngestProgress) => void): Promise<IngestResult> {
   const result: IngestResult = { added: 0, flagged: 0, unparsed: 0 };
   update(s => {
     const hashes = new Set(s.transactions.map(t => t.source_hash).filter(Boolean));

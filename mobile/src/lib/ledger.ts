@@ -60,18 +60,29 @@ export interface UnparsedInput {
 
 export interface ScanBatch { transactions: Transaction[]; unparsed: UnparsedInput[] }
 export interface IngestResult { added: number; flagged: number; unparsed: number }
+// Ingest steps for a progress bar: checking each candidate against the ledger, then adding
+// the new rows and "Couldn't read" messages.
+export interface IngestProgress { phase: 'checking' | 'adding'; done: number; total: number }
+const INGEST_PROGRESS_EVERY = 25;
 
 // Scan ingest (spec §5.2): drop rows already in the ledger by source hash, resolve
 // identity, flag duplicates against the ledger from 24h before the batch and against
 // the batch itself, then insert oldest first. One transaction for the whole batch.
-export async function ingestScanSql(db: SqlDatabase, batch: ScanBatch, now: number = Date.now()): Promise<IngestResult> {
+export async function ingestScanSql(db: SqlDatabase, batch: ScanBatch, now: number = Date.now(), onProgress?: (progress: IngestProgress) => void): Promise<IngestResult> {
   const result: IngestResult = { added: 0, flagged: 0, unparsed: 0 };
+  const tick = (phase: IngestProgress['phase'], done: number, total: number) => {
+    if (onProgress && (done % INGEST_PROGRESS_EVERY === 0 || done === total)) onProgress({ phase, done, total });
+  };
   await db.withExclusiveTransactionAsync(async tx => {
     const fresh: Transaction[] = [];
-    const seen = new Set<string>();
-    for (const t of batch.transactions) {
-      if (t.sourceHash && seen.has(t.sourceHash)) continue;
-      if (await tx.getFirstAsync('SELECT 1 FROM transactions WHERE id=? OR (source_hash IS NOT NULL AND source_hash=?)', t.id, t.sourceHash)) continue;
+    // One read of what the ledger holds, instead of a query per candidate: a whole-inbox
+    // scan re-reads thousands of messages that are already stored.
+    const known = await tx.getAllAsync<{ id: string; source_hash: string | null }>('SELECT id, source_hash FROM transactions');
+    const ids = new Set(known.map(r => r.id));
+    const seen = new Set(known.flatMap(r => r.source_hash ? [r.source_hash] : []));
+    for (const [index, t] of batch.transactions.entries()) {
+      tick('checking', index, batch.transactions.length);
+      if (ids.has(t.id) || (t.sourceHash && seen.has(t.sourceHash))) continue;
       if (t.sourceHash) seen.add(t.sourceHash);
       const { account, payee } = identityFor(t);
       const accountId = account ? await upsertAccount(tx, account, t.createdAt) : null;
@@ -84,14 +95,17 @@ export async function ingestScanSql(db: SqlDatabase, batch: ScanBatch, now: numb
         "SELECT * FROM transactions WHERE occurred_at >= ? AND status IN ('auto','review','manual','duplicate_review')", since)).map(transactionFromRow);
       const dismissed = new Set((await tx.getAllAsync<DismissalRow>('SELECT a_id, b_id FROM duplicate_dismissals')).map(d => pairKey(d.a_id, d.b_id)));
       const flagged = flagDuplicates(fresh, existing, dismissed).sort((a, b) => a.occurredAt - b.occurredAt || a.createdAt - b.createdAt);
-      for (const t of flagged) {
+      const adding = flagged.length + batch.unparsed.length;
+      for (const [index, t] of flagged.entries()) {
+        tick('adding', index, adding);
         if (await insertRow(tx, 'transactions', transactionToRow(t)) > 0) {
           result.added++;
           if (t.status === 'duplicate_review') result.flagged++;
         }
       }
     }
-    for (const m of batch.unparsed) {
+    for (const [index, m] of batch.unparsed.entries()) {
+      tick('adding', fresh.length + index, fresh.length + batch.unparsed.length);
       result.unparsed += (await tx.runAsync(
         "INSERT OR IGNORE INTO unparsed_messages (id,source_hash,sender,raw_body,received_at,amount_paise,status,created_at) VALUES (?,?,?,?,?,?,'pending',?)",
         m.id, m.sourceHash, m.sender, m.rawBody, m.receivedAt, m.amountPaise, now)).changes;

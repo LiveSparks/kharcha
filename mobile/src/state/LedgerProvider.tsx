@@ -22,6 +22,7 @@ import type { DuplicatePair } from '@/lib/duplicates';
 import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
 import type { PayeeStats } from '@/lib/resolve';
 import { readBankSms, requestSmsPermission } from '@/lib/sms';
+import type { ScanProgress } from '@/lib/sms';
 
 interface LedgerContextValue {
   ready: boolean;
@@ -89,6 +90,12 @@ interface LedgerContextValue {
 
 const LedgerContext = createContext<LedgerContextValue | null>(null);
 
+// A whole-inbox read can take a minute. Its progress lives in its own context so the
+// ticks re-render only the progress bar, not every ledger consumer. Null when idle, and
+// during a short incremental scan.
+export interface ScanStatus extends ScanProgress { full: boolean }
+const ScanProgressContext = createContext<ScanStatus | null>(null);
+
 async function trackScheduleWrite(draft: ScheduleDraft): Promise<string> {
   const now = Date.now();
   const id = randomUUID();
@@ -104,8 +111,10 @@ async function dismissSuggestionWrite(c: SeriesCandidate): Promise<void> {
     status: 'dismissed', createdAt: now, decidedAt: now });
 }
 
+// The first scan and a full re-read take the whole inbox; later scans read only what is new
+// (with a 2-minute overlap). Re-reading is safe: rows dedupe on source_hash.
 function scanStart(full: boolean, lastScanAt: number): number {
-  return full || !lastScanAt ? Date.now() - 90 * 86400_000 : lastScanAt - 120_000;
+  return full || !lastScanAt ? 0 : lastScanAt - 120_000;
 }
 
 export function LedgerProvider({ children }: { children: React.ReactNode }) {
@@ -123,6 +132,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [senders, setSenders] = useState<SenderRule[]>([]);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const scanBusyRef = useRef(false);
+  const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
   // When the ledger was last read; balance staleness is judged against it.
   const [loadedAt, setLoadedAt] = useState(0);
 
@@ -157,9 +167,12 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const since = scanStart(full, preferences.lastScanAt);
+      const whole = since === 0;
+      const report = (progress: ScanProgress) => { if (whole) setScanStatus({ ...progress, full: whole }); };
       // Flagging runs at ingest against the ledger, so a copy that lands in a later
       // scan than its original is still caught (WF-5).
-      const { added } = await ingestScan(await readBankSms(senders, since, preferences.autoAdd));
+      const batch = await readBankSms(senders, since, preferences.autoAdd, report);
+      const { added } = await ingestScan(batch, report);
       await savePreference('lastScanAt', Date.now());
       await refresh();
       return added;
@@ -167,7 +180,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       const message = e instanceof Error ? e.message : 'Could not read SMS.';
       setError(message);
       throw e;
-    } finally { scanBusyRef.current = false; setBusy(false); }
+    } finally { scanBusyRef.current = false; setBusy(false); setScanStatus(null); }
   }, [preferences, senders, refresh]);
 
   const scanRef = useRef(scan);
@@ -290,13 +303,17 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     clearError: () => setError(null),
   }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
 
-  return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
+  return <LedgerContext.Provider value={value}><ScanProgressContext.Provider value={scanStatus}>{children}</ScanProgressContext.Provider></LedgerContext.Provider>;
 }
 
 export function useLedger(): LedgerContextValue {
   const value = useContext(LedgerContext);
   if (!value) throw new Error('LedgerProvider is missing');
   return value;
+}
+
+export function useScanProgress(): ScanStatus | null {
+  return useContext(ScanProgressContext);
 }
 
 export { exportSnapshot };

@@ -254,7 +254,7 @@ installs only (existing users' lists aren't touched).
    to that same unflagged value. **[WF-8]** The rule for the restored status is spelled out
    here; WF-5 says "back to `auto`".
 4. No backfill of `unparsed_messages`: rejected SMS were never stored. The next full scan
-   (the 90-day window) captures them.
+   (the whole inbox) captures them.
 
 **v3 → v4 (P3)**
 1. Add `reported_balance_paise`, `reported_avl_limit_paise` to `transactions`, and

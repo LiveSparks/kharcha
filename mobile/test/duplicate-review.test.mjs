@@ -236,6 +236,29 @@ test('ingest flags a copy that arrives in a later scan and skips a re-scan', asy
   assert.ok(flagged.accountId && flagged.payeeId, 'identity is filled before flagging');
 });
 
+test('whole-inbox re-read: stored rows are skipped and progress only moves forward', async () => {
+  const db = await v3Fixture();
+  const batch = MESSAGES.slice(0, 6).map(([sender, body], i) => smsTransaction(sender, body, T0 + (20 + i) * DAY, `re${i}`));
+  const first = await ingestScanSql(db, { transactions: batch, unparsed: [] });
+  assert.equal(first.added, batch.length);
+  const before = (await listTransactionRows(db)).length;
+  // The same messages again, with new ids (each scan makes fresh ones): same hashes, nothing added.
+  const again = batch.map((t, i) => ({ ...t, id: `again${i}` }));
+  const ticks = [];
+  const second = await ingestScanSql(db, { transactions: again, unparsed: [] }, Date.now(), p => ticks.push(p));
+  assert.deepEqual(second, { added: 0, flagged: 0, unparsed: 0 });
+  assert.equal((await listTransactionRows(db)).length, before);
+  assert.deepEqual(ticks[0], { phase: 'checking', done: 0, total: again.length });
+  assert.ok(ticks.every(t => t.done <= t.total));
+  // A new message among stored ones is still added, and adding reports after checking.
+  const fresh = smsTransaction(MESSAGES[7][0], MESSAGES[7][1], T0 + 40 * DAY, 'brand-new');
+  const order = [];
+  const third = await ingestScanSql(db, { transactions: [...again, fresh], unparsed: [] }, Date.now(), p => order.push(p.phase));
+  assert.equal(third.added, 1);
+  assert.equal(order[0], 'checking');
+  assert.equal(order.at(-1), 'adding');
+});
+
 test('merge, unmerge and keep both through SQLite', async () => {
   const db = await v3Fixture();
   const [sender, body] = MESSAGES[9];

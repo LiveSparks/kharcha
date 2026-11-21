@@ -11,6 +11,7 @@ import { useNow } from '@/lib/useNow';
 import { showMessage } from '@/ui/dialog';
 import { HomeSlot } from '@/ui/HomeSlot';
 import { UpcomingStrip } from '@/ui/Schedules';
+import { ScanProgressBar } from '@/ui/ScanProgress';
 
 export default function Home() {
   const p = usePalette();
@@ -32,6 +33,7 @@ export default function Home() {
       <Body muted>Net across accounts</Body>
       <Text style={{ fontFamily: fonts.mono, fontSize: 16, color: net < 0 ? p.debit : p.ink }}>{figureText(net)} ›</Text>
     </Pressable> : null}
+    <ScanProgressBar />
     <HomeSlot />
     <UpcomingStrip now={now} />
     <SummarySlip spent={spent} received={received} budget={budget} lastScanAt={preferences.lastScanAt} />

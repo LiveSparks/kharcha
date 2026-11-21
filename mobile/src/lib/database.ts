@@ -9,7 +9,7 @@ import {
   renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
   endScheduleSql, insertScheduleSql, listScheduleRows, updateScheduleTermsSql,
 } from './ledger';
-import type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV2 } from './ledger';
+import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV2 } from './ledger';
 
 export type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot } from './ledger';
 
@@ -46,7 +46,7 @@ export async function listPayees(): Promise<Payee[]> { return listPayeeRows(awai
 export async function listUnparsed(): Promise<UnparsedMessage[]> { return listUnparsedRows(await ledger()); }
 
 export async function addTransaction(t: Transaction): Promise<boolean> { return insertTransaction(await ledger(), t); }
-export async function ingestScan(batch: ScanBatch): Promise<IngestResult> { return ingestScanSql(await ledger(), batch); }
+export async function ingestScan(batch: ScanBatch, onProgress?: (progress: IngestProgress) => void): Promise<IngestResult> { return ingestScanSql(await ledger(), batch, Date.now(), onProgress); }
 
 export async function mergeDuplicate(flaggedId: string, survivorId: string): Promise<void> { await mergeDuplicateSql(await ledger(), flaggedId, survivorId); }
 export async function keepBoth(id: string): Promise<void> { await keepBothSql(await ledger(), id); }

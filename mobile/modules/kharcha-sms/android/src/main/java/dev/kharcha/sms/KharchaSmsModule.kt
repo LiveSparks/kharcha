@@ -26,7 +26,7 @@ class KharchaSmsModule : Module() {
         val addressIndex = cursor.getColumnIndexOrThrow("address")
         val bodyIndex = cursor.getColumnIndexOrThrow("body")
         val dateIndex = cursor.getColumnIndexOrThrow("date")
-        while (cursor.moveToNext() && output.size < 1500) {
+        while (cursor.moveToNext()) {
           val sender = cursor.getString(addressIndex) ?: continue
           if (!matchesSender(sender, allowed)) continue
           val body = cursor.getString(bodyIndex) ?: continue

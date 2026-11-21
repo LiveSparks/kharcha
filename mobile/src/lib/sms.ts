@@ -17,19 +17,27 @@ export async function requestSmsPermission(): Promise<boolean> {
   })) === PermissionsAndroid.RESULTS.GRANTED;
 }
 
+// Where a scan is: fetching from the inbox, parsing `done` of `total` bank messages,
+// checking them against the ledger, or adding the new ones (ingest's steps).
+export interface ScanProgress { phase: 'reading' | 'parsing' | 'checking' | 'adding'; done: number; total: number }
+
+const PROGRESS_EVERY = 25;
+
 // Reads allowed-sender SMS since `since`. Parsed messages become candidate rows;
 // rejected ones that read like a transaction go to "Couldn't read". Duplicate flagging
 // happens at ingest, against the ledger (ingestScan).
-export async function readBankSms(senders: SenderRule[], since: number, autoAdd: boolean): Promise<ScanBatch> {
+export async function readBankSms(senders: SenderRule[], since: number, autoAdd: boolean, onProgress?: (progress: ScanProgress) => void): Promise<ScanBatch> {
   const none: ScanBatch = { transactions: [], unparsed: [] };
   if (!canReadSms()) return none;
   const allowed = senders.filter(sender => sender.enabled).map(sender => sender.address);
   if (!allowed.length) return none;
+  onProgress?.({ phase: 'reading', done: 0, total: 0 });
   const native = (await import('../../modules/kharcha-sms/src/KharchaSmsModule')).default;
   const messages = await native.listMessages(allowed, since);
   const result: Transaction[] = [];
   const unparsed: UnparsedInput[] = [];
-  for (const sms of messages) {
+  for (const [index, sms] of messages.entries()) {
+    if (index % PROGRESS_EVERY === 0) onProgress?.({ phase: 'parsing', done: index, total: messages.length });
     const parsed = parseBankSms(sms.body);
     if (!parsed && !isUnreadTransaction(sms.body)) continue;
     const sourceHash = await Crypto.digestStringAsync(

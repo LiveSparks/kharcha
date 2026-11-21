@@ -224,7 +224,7 @@ Notation: **R** = replay target (numeric, fixed corpus) · **D** = device step (
   on the same device. Names, links, merges, Schedules and dismissals all survive (this is
   snapshot schema 2). A pre-P1 schema-1 backup, if one exists, restores and migrates
   forward.
-- **D** A fresh-install onboarding plus the 90-day scan works. This runs only if the
+- **D** A fresh-install onboarding plus the first (whole-inbox) scan works. This runs only if the
   operator accepts clearing app data, after a pull and a backup. It's optional.
 - **D** Spot-check the P1–P5 device items once more on the release build: one per phase.
 
