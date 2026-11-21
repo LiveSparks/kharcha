@@ -22,14 +22,18 @@ import { CLOSE_GAP_MS, flagDuplicates } from '../src/lib/duplicates.ts';
 import { isUnreadTransaction, unparsedHints } from '../src/lib/unparsed.ts';
 import { DEFAULT_SENDERS } from '../src/lib/model.ts';
 import { bankFamily } from '../src/lib/banks.ts';
-import { V1_SCHEMA, migrate, readVersion } from '../src/lib/migrations.ts';
-import { ingestScanSql, listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows } from '../src/lib/ledger.ts';
+import { LATEST_VERSION, V1_SCHEMA, migrate, readVersion } from '../src/lib/migrations.ts';
+import { ingestScanSql, listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, renamePayeeSql } from '../src/lib/ledger.ts';
+import { detectSeries } from '../src/lib/schedules.ts';
 import { v1TransactionRow } from '../src/lib/rows.ts';
-import { debitCardSuggestions, effectivePayeeId, namingNudge, payeeStats, unnamedCount } from '../src/lib/resolve.ts';
 import { computeBalance, largeGap } from '../src/lib/balances.ts';
+import { byId, debitCardSuggestions, effectivePayeeId, namingNudge, payeeLabel, payeeStats, unnamedCount } from '../src/lib/resolve.ts';
 
-const PHASE = 'P3';
-const LATEST = 4;
+const PHASE = 'P4';
+const LATEST = LATEST_VERSION;
+// P4: a payee that must never be a Schedule (the frequent grocer, WF-6). Its real name
+// lives in the private pseudonym key, so the gate session passes it in.
+const notASchedule = process.env.KHARCHA_P4_NOT_SCHEDULE ? new RegExp(process.env.KHARCHA_P4_NOT_SCHEDULE, 'i') : null;
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const corpus = process.env.KHARCHA_CORPUS;
 if (!corpus) {
@@ -244,6 +248,31 @@ for (const a of linked) {
   gapMetrics[label] = { kind: b.kind, anchors: b.anchors, gaps: b.gaps.length, sumAbsGapPaise: b.gaps.reduce((n, g) => n + g.amountPaise, 0), figurePaise: b.amountPaise };
   for (const g of b.gaps) if (largeGap(g, b.amountPaise)) reviewGaps.push({ account: label, at: new Date(g.occurredAt).toISOString(), paise: g.direction === 'credit' ? g.amountPaise : -g.amountPaise });
 }
+// P4: Schedules. Detection runs as of the last message in the export.
+const replayNow = Math.max(...messages.map(m => m.receivedAt));
+const describe = (c, payees) => {
+  const p = payees.get(c.payeeId);
+  return { payee: p ? payeeLabel(p) : c.payeeId, account: c.accountId, direction: c.direction, interval: c.interval, hits: c.hits.length,
+    typicalRs: c.typicalPaise / 100, since: new Date(c.firstHitAt).toISOString().slice(0, 10), last: new Date(c.lastHitAt).toISOString().slice(0, 10), lapsed: c.lapsed };
+};
+const payeeMapB = byId(payeesB);
+const candidates = detectSeries(rowsB, payeeMapB, replayNow);
+const candidatesA = detectSeries(rowsA, byId(payeesA), replayNow);
+check(JSON.stringify(candidates.map(c => describe(c, payeeMapB))) === JSON.stringify(candidatesA.map(c => describe(c, byId(payeesA)))), 'upgrade and ingest detect different series');
+// Name the Workspace payees identically (the bank changed the merchant string): one
+// series. WF-6's 8 candidates (5 active, 3 lapsed) count Workspace once named.
+const workspace = payeesB.filter(p => p.kind === 'merchant' && /workspace|cybs/i.test(payeeLabel(p)));
+for (const p of workspace) await renamePayeeSql(fresh, p.id, 'Google Workspace');
+const namedPayees = byId(await listPayeeRows(fresh));
+const named = detectSeries(rowsB, namedPayees, replayNow).map(c => describe(c, namedPayees));
+const workspaceSeries = named.filter(c => c.payee === 'Google Workspace');
+check(workspaceSeries.length === 1 && workspaceSeries[0].hits === 22 && workspaceSeries[0].interval === 'monthly',
+  `named Workspace: expected one 22-hit monthly series, got ${JSON.stringify(workspaceSeries.map(c => `${c.interval}:${c.hits}`))}`);
+check(named.length === 8, `expected 8 schedule candidates (Workspace named), got ${named.length}`);
+check(named.filter(c => !c.lapsed).length === 5, `expected 5 active candidates, got ${named.filter(c => !c.lapsed).length}`);
+check(named.filter(c => c.lapsed).length === 3, `expected 3 lapsed candidates, got ${named.filter(c => c.lapsed).length}`);
+check(candidates.length === named.length + 1, `unnamed, Workspace should show as an old and a new series: ${candidates.length} candidates`);
+if (notASchedule) check(![...candidates.map(c => describe(c, payeeMapB)), ...named].some(c => notASchedule.test(c.payee)), 'the frequent-merchant payee was detected as a schedule');
 
 const stats = payeeStats(rowsA);
 const nudge = namingNudge(payeesA, stats);
@@ -269,13 +298,19 @@ const summary = {
     statusAfterRelink: Object.fromEntries(['auto', 'review', 'duplicate_review'].map(s => [s, rowsA.filter(t => t.status === s).length])),
   },
   balances: { anchorTargets, gapMetrics, largeGapsForReview: reviewGaps.length },
+  schedules: {
+    candidates: named.length, active: named.filter(c => !c.lapsed).length, lapsed: named.filter(c => c.lapsed).length,
+    series: named, unnamedCandidates: candidates.length, unnamedSeries: candidates.map(c => describe(c, payeeMapB)),
+    workspacePayees: workspace.length, workspaceNamed: workspaceSeries,
+    notAScheduleChecked: !!notASchedule,
+  },
   couldntRead: { count: unread.length, bySender: Object.fromEntries([...new Set(unread.map(m => bankFamily(m.sender)))].sort().map(f => [f, unread.filter(m => bankFamily(m.sender) === f).length])) },
   failures,
 };
 
 // Baseline: the first run records it; later runs must not move.
 const baselinePath = join(out, `baseline-${PHASE}.json`);
-const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead, balances: s.balances });
+const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead, balances: s.balances, schedules: s.schedules });
 if (!existsSync(baselinePath)) {
   if (!failures.length) writeFileSync(baselinePath, `${JSON.stringify(tracked(summary), null, 2)}\n`);
   summary.baseline = failures.length ? 'not written (targets failed)' : `written ${baselinePath}`;

@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Action, Body, Caption, Screen, ScreenHead } from '@/ui/Kit';
 import { Field, Note, OptionalCategoryPicker } from '@/ui/Forms';
-import { accountDefaultLabel, isLive, payeeDefaultLabel, payeeReach, validateName } from '@/lib/resolve';
+import { accountDefaultLabel, effectivePayeeId, isLive, payeeDefaultLabel, payeeReach, validateName } from '@/lib/resolve';
+import { scheduleFor } from '@/lib/schedules';
 import type { Category } from '@/lib/model';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
@@ -13,7 +14,7 @@ import { showMessage } from '@/ui/dialog';
 // default label back everywhere.
 export default function NameSheet() {
   const { kind, id } = useLocalSearchParams<{ kind: 'payee' | 'account'; id: string }>();
-  const { payeesById, accountsById, transactions, renamePayee, renameAccount } = useLedger();
+  const { payeesById, accountsById, transactions, scheduleMatches, renamePayee, renameAccount } = useLedger();
   const payee = kind === 'payee' ? payeesById.get(id) : undefined;
   const account = kind === 'account' ? accountsById.get(id) : undefined;
   const current = payee ?? account;
@@ -23,6 +24,9 @@ export default function NameSheet() {
   if (!current) return <Screen><ScreenHead title="Not found" back /><Body muted>This payee or account is no longer in your ledger.</Body></Screen>;
   const defaultLabel = payee ? payeeDefaultLabel(payee) : accountDefaultLabel(account!);
   const reach = payee ? payeeReach(payee.id, transactions) : transactions.filter(t => isLive(t) && t.accountId === account!.id).length;
+  // Track as schedule (P4): prefilled from this payee's latest row, unless already tracked.
+  const latest = payee && !scheduleFor(payee, scheduleMatches.state.values(), payeesById)
+    ? transactions.find(t => isLive(t) && effectivePayeeId(t) === payee.id) : undefined;
 
   async function save(clear = false) {
     let clean: string | null;
@@ -46,6 +50,7 @@ export default function NameSheet() {
       <Note>Applies to {reach} past and all future transactions.{payee ? ' Rows you categorised by hand keep their category.' : ''}</Note>
       <Action title={busy ? 'Saving…' : 'Save'} disabled={busy} onPress={() => void save()} />
       {current.name ? <Action title="Clear name" variant="ghost" disabled={busy} onPress={() => void save(true)} /> : null}
+      {latest ? <Action title="Track as schedule" variant="secondary" disabled={busy} onPress={() => router.push({ pathname: '/schedule', params: { from: latest.id } })} /> : null}
     </View>
   </Screen>;
 }

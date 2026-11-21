@@ -6,12 +6,15 @@ import {
   listBudgets, listPayees, listSenders, listTransactions, listUnparsed, loadPreferences, markPayeeNudged, mergeDuplicate, movePayee,
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
   setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, unmerge,
+  addSchedule, endSchedule, listSchedules, updateScheduleTerms,
 } from '@/lib/database';
-import type { MoveTarget, Snapshot } from '@/lib/database';
+import type { MoveTarget, ScheduleTerms, Snapshot } from '@/lib/database';
 import { DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
-import type { Account, Budget, Category, Direction, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
+import type { Account, Budget, Category, Direction, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
 import { computeBalances, netWorth } from '@/lib/balances';
 import type { AccountBalance } from '@/lib/balances';
+import { detectSeries, matchSchedules, suggestionsFrom } from '@/lib/schedules';
+import type { ScheduleDraft, ScheduleMatches, SeriesCandidate } from '@/lib/schedules';
 import { duplicatePairs } from '@/lib/duplicates';
 import type { DuplicatePair } from '@/lib/duplicates';
 import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
@@ -39,6 +42,14 @@ interface LedgerContextValue {
   // Balances (P3): per account, and Home's Net (null when no account has a figure).
   balances: ReadonlyMap<string, AccountBalance>;
   net: number | null;
+  // Schedules (P4): stored decisions, plus suggestions and matches computed on read.
+  schedules: Schedule[];
+  suggestions: SeriesCandidate[];
+  scheduleMatches: ScheduleMatches;
+  trackSchedule: (draft: ScheduleDraft) => Promise<string>;
+  dismissSuggestion: (candidate: SeriesCandidate) => Promise<void>;
+  updateScheduleTerms: (id: string, terms: ScheduleTerms) => Promise<void>;
+  endSchedule: (id: string) => Promise<void>;
   budgets: Budget[];
   senders: SenderRule[];
   preferences: Preferences;
@@ -71,6 +82,21 @@ interface LedgerContextValue {
 
 const LedgerContext = createContext<LedgerContextValue | null>(null);
 
+async function trackScheduleWrite(draft: ScheduleDraft): Promise<string> {
+  const now = Date.now();
+  const id = randomUUID();
+  await addSchedule({ ...draft, id, status: 'active', createdAt: now, decidedAt: now });
+  return id;
+}
+
+// Not a schedule: a 'dismissed' row for the series key, interval and band.
+async function dismissSuggestionWrite(c: SeriesCandidate): Promise<void> {
+  const now = Date.now();
+  await addSchedule({ id: randomUUID(), payeeId: c.payeeId, accountId: c.accountId, direction: c.direction, interval: c.interval,
+    anchorDay: c.anchorDay, anchorMonth: c.anchorMonth, amountMin: c.amountMin, amountMax: c.amountMax, lastPaidAt: c.lastHitAt,
+    status: 'dismissed', createdAt: now, decidedAt: now });
+}
+
 function scanStart(full: boolean, lastScanAt: number): number {
   return full || !lastScanAt ? Date.now() - 90 * 86400_000 : lastScanAt - 120_000;
 }
@@ -83,6 +109,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
   const [unparsed, setUnparsed] = useState<UnparsedMessage[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  // When the ledger was last read: the "now" detection and matching are computed at.
+  const [revisionAt, setRevisionAt] = useState(0);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [senders, setSenders] = useState<SenderRule[]>([]);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
@@ -91,10 +120,12 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [loadedAt, setLoadedAt] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
-      listTransactions(), listAccounts(), listPayees(), listUnparsed(), listBudgets(), listSenders(), loadPreferences(),
+    const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences, nextSchedules] = await Promise.all([
+      listTransactions(), listAccounts(), listPayees(), listUnparsed(), listBudgets(), listSenders(), loadPreferences(), listSchedules(),
     ]);
     setTransactions(nextTransactions);
+    setSchedules(nextSchedules);
+    setRevisionAt(Date.now());
     setUnparsed(nextUnparsed);
     setAccounts(nextAccounts);
     setPayees(nextPayees);
@@ -195,6 +226,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       keepBoth: after(keepBoth),
       unmerge: after(unmerge),
       dismissUnparsed: after(dismissUnparsed),
+      trackSchedule: after(trackScheduleWrite),
+      dismissSuggestion: after(dismissSuggestionWrite),
+      updateScheduleTerms: after(updateScheduleTerms),
+      endSchedule: after(endSchedule),
     };
   }, [refresh]);
 
@@ -212,6 +247,16 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     };
   }, [transactions, payees, accounts, loadedAt]);
 
+  // Detection and matching re-run on every ledger revision: scans, naming, moves,
+  // merges and unmerges all go through refresh (spec §5.4 re-run triggers).
+  const scheduling = useMemo(() => {
+    const candidates = detectSeries(transactions, resolved.payeesById, revisionAt);
+    return {
+      suggestions: suggestionsFrom(candidates, schedules, resolved.payeesById),
+      scheduleMatches: matchSchedules(transactions, schedules, resolved.payeesById, revisionAt),
+    };
+  }, [transactions, schedules, resolved, revisionAt]);
+
   const changeBudget = useCallback(async (category: Category, amountPaise: number) => {
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a budget above zero.');
     await saveBudget(category, amountPaise);
@@ -224,7 +269,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<LedgerContextValue>(() => ({
-    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, budgets, senders, preferences, refresh, scan, enableSms,
+    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, budgets, senders, preferences, refresh, scan, enableSms,
     addManual, addFromUnparsed, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
     setSender: async sender => { await saveSender(sender); await refresh(); },
@@ -232,7 +277,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
+  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
 
   return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
 }

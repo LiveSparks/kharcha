@@ -11,7 +11,7 @@ import type { IconName } from '@/ui/Icon';
 
 export default function You() {
   const p = usePalette();
-  const { preferences, senders, payees, stats, setPreference, enableSms } = useLedger();
+  const { preferences, senders, payees, stats, suggestions, schedules, setPreference, enableSms } = useLedger();
   const unnamed = unnamedCount(payees, stats);
   async function toggleRead(value: boolean) {
     try {
@@ -30,6 +30,7 @@ export default function You() {
     {senders.map(sender => <Pressable key={sender.address} accessibilityRole="button" accessibilityLabel={`Edit ${sender.label}`} onPress={() => router.push({ pathname: '/sender', params: { address: sender.address } })} style={{ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center' }}><View style={{ flex: 1 }}><Text style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{sender.label}</Text><Caption>{sender.address} · {sender.enabled ? 'Reading' : 'Paused'}</Caption></View><Icon name="chevron" color={p.muted} size={17} /></Pressable>)}
     <View style={{ marginTop: 32, marginBottom: 9 }}><SectionTitle>Your data</SectionTitle></View>
     <Menu title={`Payees and accounts${unnamed ? ` · ${unnamed} unnamed` : ''}`} detail="Name who you pay and the accounts you pay from" icon="edit" onPress={() => router.push('/payees')} />
+    <Menu title={`Schedules${suggestions.length ? ` · ${suggestions.length} suggested` : ''}`} detail={`${schedules.filter(s => s.status === 'active').length} tracked · bills and transfers that repeat`} icon="refresh" onPress={() => router.push('/schedules')} />
     <Menu title="Paste a bank SMS" detail="Parse a message you choose" icon="sms" onPress={() => router.push('/import')} />
     <Menu title="Encrypted backup" detail="Optional · stored on your Render API" icon="cloud" onPress={() => router.push('/backup')} />
     <View style={{ height: 24 }} />

@@ -6,12 +6,13 @@ import { fonts, usePalette } from './theme';
 import { namingNudge } from '@/lib/resolve';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from './dialog';
+import { SuggestionCard } from './Schedules';
 
 // Home card slot (spec §6): at most one card. Priority, highest first, as later phases
 // add sources: pending duplicates (P2) > naming nudge (P1) > schedule suggestion (P4).
 export function HomeSlot() {
   const p = usePalette();
-  const { payees, stats, pairs, markPayeeNudged } = useLedger();
+  const { payees, stats, pairs, suggestions, markPayeeNudged } = useLedger();
   const nudge = useMemo(() => namingNudge(payees, stats), [payees, stats]);
   // Pending duplicates distort totals, so they outrank naming (WF-5). No snooze.
   if (pairs.length) {
@@ -21,7 +22,11 @@ export function HomeSlot() {
       <View style={{ flexDirection: 'row' }}><Action compact variant="leaf" title="Review" onPress={() => router.push({ pathname: '/(tabs)/inbox', params: { tab: 'duplicates' } })} /></View>
     </View>;
   }
-  if (!nudge) return null;
+  if (!nudge) {
+    // Schedule suggestion (P4): one at a time, only series still running.
+    const suggestion = suggestions.find(c => !c.lapsed);
+    return suggestion ? <SuggestionCard compact candidate={suggestion} /> : null;
+  }
   // Either answer stamps nudged_at, so the card never returns for this payee.
   async function answer(name: boolean) {
     if (!nudge) return;

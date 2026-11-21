@@ -8,6 +8,7 @@ import { payeeList } from '@/lib/resolve';
 import type { PayeeListEntry } from '@/lib/resolve';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
+import { ScheduleBadge } from '@/ui/Schedules';
 
 // Payees list (WF-3): unnamed payees by total spend, then named payees A–Z. One Name
 // action covers every row with that payee.
@@ -36,6 +37,7 @@ function PayeeLine({ entry: e }: { entry: PayeeListEntry }) {
     <View style={{ flex: 1, minWidth: 0 }}>
       <Text numberOfLines={1} style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{e.label}</Text>
       <Caption>{e.stats.count} {e.stats.count === 1 ? 'transaction' : 'transactions'} · {total}{e.payee.category ? ` · ${e.payee.category}` : ''}</Caption>
+      <ScheduleBadge payee={e.payee} />
     </View>
     <Text style={{ fontFamily: fonts.bodyMedium, color: e.payee.name ? p.muted : p.review, fontSize: 13 }}>{e.payee.name ? 'Rename' : 'Name'}</Text>
   </Pressable>;

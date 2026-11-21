@@ -1,4 +1,4 @@
-import type { Account, Budget, Category, Payee, RestorableStatus, SenderRule, Transaction, UnparsedMessage } from './model';
+import type { Account, Budget, Category, Payee, RestorableStatus, Schedule, SenderRule, Transaction, UnparsedMessage } from './model';
 
 // Storage-shaped rows (snake_case, one key per column). SQLite returns these, backup
 // snapshot schema 2 carries them verbatim, and the web preview stores them, so a row
@@ -57,6 +57,13 @@ export interface UnparsedRow {
 
 // a_id < b_id, so a pair has one spelling.
 export interface DismissalRow { a_id: string; b_id: string; created_at: number }
+
+// Schedules (P4).
+export interface ScheduleRow {
+  id: string; payee_id: string; account_id: string | null; direction: Schedule['direction']; interval: Schedule['interval'];
+  anchor_day: number; anchor_month: number | null; amount_min: number; amount_max: number; last_paid_at: number | null;
+  status: Schedule['status']; created_at: number; decided_at: number;
+}
 
 export interface BudgetRow { category: Category; amount_paise: number }
 export interface SenderRow { address: string; label: string; enabled: number }
@@ -119,6 +126,22 @@ export function unparsedToRow(m: UnparsedMessage): UnparsedRow {
   return {
     id: m.id, source_hash: m.sourceHash, sender: m.sender, raw_body: m.rawBody, received_at: m.receivedAt,
     amount_paise: m.amountPaise, status: m.status, transaction_id: m.transactionId, created_at: m.createdAt,
+  };
+}
+
+export function scheduleFromRow(row: ScheduleRow): Schedule {
+  return {
+    id: row.id, payeeId: row.payee_id, accountId: row.account_id, direction: row.direction, interval: row.interval,
+    anchorDay: row.anchor_day, anchorMonth: row.anchor_month, amountMin: row.amount_min, amountMax: row.amount_max,
+    lastPaidAt: row.last_paid_at, status: row.status, createdAt: row.created_at, decidedAt: row.decided_at,
+  };
+}
+
+export function scheduleToRow(s: Schedule): ScheduleRow {
+  return {
+    id: s.id, payee_id: s.payeeId, account_id: s.accountId, direction: s.direction, interval: s.interval,
+    anchor_day: s.anchorDay, anchor_month: s.anchorMonth, amount_min: s.amountMin, amount_max: s.amountMax,
+    last_paid_at: s.lastPaidAt, status: s.status, created_at: s.createdAt, decided_at: s.decidedAt,
   };
 }
 

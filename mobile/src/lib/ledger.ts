@@ -1,12 +1,13 @@
 import { identityFor, overrideKey } from './identity.ts';
 import { LATEST_VERSION, MIGRATED_TABLES, V1_SCHEMA, migrate, migrations, readVersion, upsertAccount, upsertPayee } from './migrations.ts';
 import type { SqlDatabase, SqlExecutor } from './migrations.ts';
-import { accountFromRow, payeeFromRow, transactionFromRow, transactionToRow, unparsedFromRow, v1TransactionRow } from './rows.ts';
-import type { AccountRow, BudgetRow, DismissalRow, PayeeRow, PreferenceRow, SenderRow, SqlValue, TransactionRow, UnparsedRow } from './rows.ts';
+import { accountFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, transactionFromRow, transactionToRow, unparsedFromRow, v1TransactionRow } from './rows.ts';
+import type { AccountRow, BudgetRow, DismissalRow, PayeeRow, PreferenceRow, ScheduleRow, SenderRow, SqlValue, TransactionRow, UnparsedRow } from './rows.ts';
 import { DUPLICATE_WINDOW_MS, flagDuplicates, keepBothDecision, mergeDecision, pairKey, unmergeDecision } from './duplicates.ts';
 import type { DuplicateDecision } from './duplicates.ts';
 import { validateName } from './resolve.ts';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import { validateTerms } from './schedules.ts';
+import type { Account, Budget, Category, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 
 // SQL ledger operations shared by the app (expo-sqlite) and the node harness
 // (node:sqlite). Raw parser fields are written once, at insert, and never again.
@@ -232,6 +233,32 @@ export async function linkDebitCardSql(db: SqlExecutor, cardId: string, bankId: 
   else await db.runAsync('UPDATE accounts SET funded_by=NULL WHERE id=?', cardId);
 }
 
+// --- Schedules (spec §5.4) -----------------------------------------------------------
+
+export async function listScheduleRows(db: SqlExecutor): Promise<Schedule[]> {
+  return (await db.getAllAsync<ScheduleRow>('SELECT * FROM schedules ORDER BY created_at, id')).map(scheduleFromRow);
+}
+
+// Track it, Track as schedule, and Not a schedule (a 'dismissed' row) all store one row.
+export async function insertScheduleSql(db: SqlExecutor, s: Schedule): Promise<void> {
+  if (s.status !== 'dismissed') validateTerms(s);
+  await insertRow(db, 'schedules', scheduleToRow(s));
+}
+
+export type ScheduleTerms = Pick<Schedule, 'interval' | 'anchorDay' | 'anchorMonth' | 'amountMin' | 'amountMax'>;
+
+// The user edits terms; detection never does (WF-6).
+export async function updateScheduleTermsSql(db: SqlExecutor, id: string, terms: ScheduleTerms, at: number = Date.now()): Promise<void> {
+  validateTerms(terms);
+  await db.runAsync("UPDATE schedules SET interval=?, anchor_day=?, anchor_month=?, amount_min=?, amount_max=?, decided_at=? WHERE id=? AND status='active'",
+    terms.interval, terms.anchorDay, terms.anchorMonth, terms.amountMin, terms.amountMax, at, id);
+}
+
+// Stop tracking: the row (and its history) stays, and it is never suggested again.
+export async function endScheduleSql(db: SqlExecutor, id: string, at: number = Date.now()): Promise<void> {
+  await db.runAsync("UPDATE schedules SET status='ended', decided_at=? WHERE id=? AND status='active'", at, id);
+}
+
 // --- Backup snapshots (spec §4.3) --------------------------------------------------
 
 export interface SnapshotV1 {
@@ -255,6 +282,8 @@ export interface SnapshotV2 {
   // v3; omitted when the writer's ledger predates the table.
   unparsed_messages?: UnparsedRow[];
   duplicate_dismissals?: DismissalRow[];
+  // P4
+  schedules?: ScheduleRow[];
   exportedAt: number;
 }
 
@@ -296,6 +325,7 @@ export async function exportSnapshotSql(db: SqlExecutor): Promise<SnapshotV2> {
     payees: await read<PayeeRow>('payees'),
     ...tables.has('unparsed_messages') ? { unparsed_messages: await read<UnparsedRow>('unparsed_messages') } : {},
     ...tables.has('duplicate_dismissals') ? { duplicate_dismissals: await read<DismissalRow>('duplicate_dismissals') } : {},
+    ...tables.has('schedules') ? { schedules: await read<ScheduleRow>('schedules') } : {},
     exportedAt: Date.now(),
   };
 }
@@ -323,7 +353,7 @@ export async function restoreSnapshotSql(db: SqlDatabase, input: unknown): Promi
       return;
     }
     // Parents before children so the references hold.
-    for (const table of ['accounts', 'payees', 'transactions', 'unparsed_messages', 'duplicate_dismissals', 'budgets', 'senders', 'preferences'] as const) {
+    for (const table of ['accounts', 'payees', 'transactions', 'unparsed_messages', 'duplicate_dismissals', 'schedules', 'budgets', 'senders', 'preferences'] as const) {
       const rows = (snapshot[table] ?? []) as unknown as Record<string, unknown>[];
       if (!rows.length) continue;
       const columns = new Set((await tx.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map(c => c.name));

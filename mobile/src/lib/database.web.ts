@@ -1,5 +1,5 @@
 import { DEFAULT_PREFERENCES, DEFAULT_SENDERS, NOT_A_DUPLICATE } from './model';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import type { Account, Budget, Category, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { DUPLICATE_WINDOW_MS, applyPatch, flagDuplicates, keepBothDecision, mergeDecision, pairKey, relinkLegacyFlags, unmergeDecision } from './duplicates';
 import type { DuplicateDecision } from './duplicates';
 import { mergeAccountKind } from './banks';
@@ -8,12 +8,13 @@ import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
 import { parseBankSms, reportedFigures } from './parser';
 import { validateSnapshot, validPaise } from './ledger';
-import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
+import type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
-import { accountFromRow, budgetFromRow, payeeFromRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
+import { accountFromRow, budgetFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
+import { validateTerms } from './schedules';
 import type { AccountRow, PayeeRow, TransactionRow } from './rows';
 
-export type { IngestResult, MoveTarget, ScanBatch, Snapshot } from './ledger';
+export type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot } from './ledger';
 
 // Web preview: the ledger lives in localStorage in the backup snapshot schema-2 shape
 // (storage rows, every column), so a web export restores on Android and back. The v1
@@ -25,15 +26,16 @@ function empty(): SnapshotV2 {
   return {
     schema: 2, schemaVersion: LATEST_VERSION, transactions: [], budgets: [],
     senders: DEFAULT_SENDERS.map(s => ({ address: s.address, label: s.label, enabled: Number(s.enabled) })),
-    preferences: [], accounts: [], payees: [], unparsed_messages: [], duplicate_dismissals: [], exportedAt: 0,
+    preferences: [], accounts: [], payees: [], unparsed_messages: [], duplicate_dismissals: [], schedules: [], exportedAt: 0,
   };
 }
 
 // The web twin of the migrations after v2: v3 adds the duplicate columns (defaults on
-// read) and links legacy flags the same way v2→v3 does.
+// read) and links legacy flags the same way v2→v3 does; the schedules step adds an
+// empty table.
 function upgrade(s: SnapshotV2): SnapshotV2 {
   if (s.schemaVersion >= LATEST_VERSION) return s;
-  const out: SnapshotV2 = { ...s, unparsed_messages: s.unparsed_messages ?? [], duplicate_dismissals: s.duplicate_dismissals ?? [], schemaVersion: LATEST_VERSION };
+  const out: SnapshotV2 = { ...s, unparsed_messages: s.unparsed_messages ?? [], duplicate_dismissals: s.duplicate_dismissals ?? [], schedules: s.schedules ?? [], schemaVersion: LATEST_VERSION };
   if (s.schemaVersion < 3) {
     const autoAddPref = s.preferences.find(p => p.key === 'autoAdd');
     const autoAdd = autoAddPref ? JSON.parse(autoAddPref.value) !== false : true;
@@ -303,6 +305,27 @@ export async function linkDebitCard(cardId: string, bankId: string | null): Prom
     card.funded_by = bankId;
     if (bankId) card.kind = 'debit_card';
   });
+}
+
+export async function listSchedules(): Promise<Schedule[]> {
+  return (read().schedules ?? []).map(scheduleFromRow).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+export async function addSchedule(schedule: Schedule): Promise<void> {
+  if (schedule.status !== 'dismissed') validateTerms(schedule);
+  update(s => { s.schedules ??= []; if (!s.schedules.some(r => r.id === schedule.id)) s.schedules.push(scheduleToRow(schedule)); });
+}
+function activeSchedule(s: SnapshotV2, id: string) {
+  return (s.schedules ?? []).find(r => r.id === id && r.status === 'active');
+}
+export async function updateScheduleTerms(id: string, terms: ScheduleTerms): Promise<void> {
+  validateTerms(terms);
+  update(s => {
+    const r = activeSchedule(s, id);
+    if (r) Object.assign(r, { interval: terms.interval, anchor_day: terms.anchorDay, anchor_month: terms.anchorMonth, amount_min: terms.amountMin, amount_max: terms.amountMax, decided_at: Date.now() });
+  });
+}
+export async function endSchedule(id: string): Promise<void> {
+  update(s => { const r = activeSchedule(s, id); if (r) Object.assign(r, { status: 'ended', decided_at: Date.now() }); });
 }
 
 export async function listBudgets(): Promise<Budget[]> { return read().budgets.map(budgetFromRow).sort((a, b) => a.category.localeCompare(b.category)); }

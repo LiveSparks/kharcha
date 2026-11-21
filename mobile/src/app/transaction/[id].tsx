@@ -12,6 +12,8 @@ import type { Category, Transaction, TransactionStatus } from '@/lib/model';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
+import { ScheduleBadge } from '@/ui/Schedules';
+import { scheduleFor } from '@/lib/schedules';
 
 function TransactionSummary({ transaction: t }: { transaction: Transaction }) {
   const p = usePalette();
@@ -83,14 +85,17 @@ function DuplicatePanel({ transaction: t }: { transaction: Transaction }) {
 // per-row "Move this one" escape hatch below it.
 function PayeeRow({ transaction: t }: { transaction: Transaction }) {
   const p = usePalette();
-  const { payeeOf } = useLedger();
+  const { payeeOf, scheduleMatches, payeesById } = useLedger();
   const payee = payeeOf(t);
+  const tracked = payee ? scheduleFor(payee, scheduleMatches.state.values(), payeesById) : null;
+  const canTrack = payee && !tracked && (t.status === 'auto' || t.status === 'review' || t.status === 'manual');
   return <View style={{ backgroundColor: p.surface, borderRadius: 12, padding: 15, gap: 12, marginBottom: 22 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Caption>{t.direction === 'debit' ? 'Paid to' : 'Received from'}</Caption>
         <Label style={{ fontSize: 16, marginTop: 2 }}><Text numberOfLines={2}>{payee ? payeeLabel(payee) : t.merchant}</Text></Label>
         {payee?.name ? <Caption numberOfLines={1}>{payee.kind === 'masked' ? `a/c ${payee.masked ?? ''}` : payee.masked ?? payee.key}</Caption> : null}
+        {payee ? <ScheduleBadge payee={payee} /> : null}
       </View>
       {payee ? <Action compact variant="secondary" title={payee.name ? 'Rename' : 'Name'} onPress={() => router.push({ pathname: '/name', params: { kind: 'payee', id: payee.id } })} /> : null}
     </View>
@@ -99,6 +104,11 @@ function PayeeRow({ transaction: t }: { transaction: Transaction }) {
       <Caption>{t.payeeOverrideId ? 'Moved by you · change' : 'Wrong payee? Move this one'}</Caption>
       <Icon name="chevron" color={p.muted} size={15} />
     </Pressable>
+    {canTrack ? <Pressable accessibilityRole="button" accessibilityLabel="Track as schedule" onPress={() => router.push({ pathname: '/schedule', params: { from: t.id } })}
+      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: p.line, paddingTop: 12 }}>
+      <Caption>Track as schedule</Caption>
+      <Icon name="chevron" color={p.muted} size={15} />
+    </Pressable> : null}
   </View>;
 }
 

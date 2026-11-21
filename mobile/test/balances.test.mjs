@@ -158,7 +158,7 @@ test('v3 → v4 adds the columns and backfills stated figures from stored messag
   const db = openDatabase();
   await seedV1(db);
   await migrate(db, 3);
-  await migrate(db);
+  await migrate(db, 4);
   assert.equal(await readVersion(db), 4);
   const rows = await listTransactionRows(db);
   const before = v1Rows();

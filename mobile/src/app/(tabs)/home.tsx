@@ -10,6 +10,7 @@ import { figureText } from '@/ui/Balances';
 import { useNow } from '@/lib/useNow';
 import { showMessage } from '@/ui/dialog';
 import { HomeSlot } from '@/ui/HomeSlot';
+import { UpcomingStrip } from '@/ui/Schedules';
 
 export default function Home() {
   const p = usePalette();
@@ -32,6 +33,7 @@ export default function Home() {
       <Text style={{ fontFamily: fonts.mono, fontSize: 16, color: net < 0 ? p.debit : p.ink }}>{figureText(net)} ›</Text>
     </Pressable> : null}
     <HomeSlot />
+    <UpcomingStrip now={now} />
     <SummarySlip spent={spent} received={received} budget={budget} lastScanAt={preferences.lastScanAt} />
     {error ? <Pressable onPress={clearError} style={{ marginTop: 17, padding: 12, backgroundColor: p.debitSoft, borderRadius: 10 }}><Body>{error}  ×</Body></Pressable> : null}
     {review ? <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/inbox')} style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: p.marigoldSoft, borderRadius: 12, padding: 15, marginTop: 19 }}>

@@ -97,6 +97,31 @@ export interface Payee {
   createdAt: number;
 }
 
+// Schedules (P4, WF-6). Only decisions are stored: a confirmed Schedule's terms, or a
+// "Not a schedule" dismissal. Suggestions, matches and states are computed on read.
+export type ScheduleInterval = 'weekly' | 'fortnightly' | 'monthly' | 'quarterly';
+export type ScheduleStatus = 'active' | 'ended' | 'dismissed';
+
+export interface Schedule {
+  id: string;
+  // Representative payee; the payee group (same display name) is resolved on read.
+  payeeId: string;
+  accountId: string | null;
+  direction: Direction;
+  interval: ScheduleInterval;
+  // Day of month (monthly/quarterly) or weekday 0-6, Sunday = 0 (weekly/fortnightly).
+  anchorDay: number;
+  // Quarterly phase 1-3 (Jan/Apr/Jul/Oct = 1); null otherwise.
+  anchorMonth: number | null;
+  amountMin: number;
+  amountMax: number;
+  // Where the read-time walk starts. Matches never write it back.
+  lastPaidAt: number | null;
+  status: ScheduleStatus;
+  createdAt: number;
+  decidedAt: number;
+}
+
 export interface Budget {
   category: Category;
   amountPaise: number;

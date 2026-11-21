@@ -1,16 +1,17 @@
 import * as SQLite from 'expo-sqlite';
 import { DEFAULT_PREFERENCES, DEFAULT_SENDERS } from './model';
-import type { Account, Budget, Category, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import type { Account, Budget, Category, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { V1_SCHEMA, migrate } from './migrations';
 import type { SqlDatabase } from './migrations';
 import {
   dismissUnparsedSql, exportSnapshotSql, ingestScanSql, insertTransaction, keepBothSql, linkDebitCardSql, linkUnparsedSql,
   listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, movePayeeSql,
   renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
+  endScheduleSql, insertScheduleSql, listScheduleRows, updateScheduleTermsSql,
 } from './ledger';
-import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV2 } from './ledger';
+import type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV2 } from './ledger';
 
-export type { IngestResult, MoveTarget, ScanBatch, Snapshot } from './ledger';
+export type { IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot } from './ledger';
 
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
 
@@ -62,6 +63,11 @@ export async function renameAccount(id: string, name: string | null): Promise<vo
 export async function setOpeningBalance(id: string, paise: number | null, at: number = Date.now()): Promise<void> { await setOpeningBalanceSql(await ledger(), id, paise, at); }
 export async function setCreditLimit(id: string, paise: number | null): Promise<void> { await setCreditLimitSql(await ledger(), id, paise); }
 export async function linkDebitCard(cardId: string, bankId: string | null): Promise<void> { await linkDebitCardSql(await ledger(), cardId, bankId); }
+
+export async function listSchedules(): Promise<Schedule[]> { return listScheduleRows(await ledger()); }
+export async function addSchedule(s: Schedule): Promise<void> { await insertScheduleSql(await ledger(), s); }
+export async function updateScheduleTerms(id: string, terms: ScheduleTerms): Promise<void> { await updateScheduleTermsSql(await ledger(), id, terms); }
+export async function endSchedule(id: string): Promise<void> { await endScheduleSql(await ledger(), id); }
 
 export async function listBudgets(): Promise<Budget[]> {
   return (await getDatabase()).getAllAsync<Budget>('SELECT category, amount_paise AS amountPaise FROM budgets ORDER BY category');

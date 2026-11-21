@@ -237,12 +237,39 @@ async function v3ToV4(tx: SqlExecutor): Promise<void> {
   await tx.execAsync('PRAGMA user_version = 4');
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4];
+
+// Schedules (P4, spec §4.2). Only creates the table; the first detection run after the
+// upgrade produces the suggestions. Records the step after whatever version it runs on,
+// so its place in the list doesn't fix its number.
+export async function addSchedules(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  await tx.execAsync(`
+    CREATE TABLE schedules (
+      id           TEXT PRIMARY KEY,
+      payee_id     TEXT NOT NULL REFERENCES payees(id),
+      account_id   TEXT REFERENCES accounts(id),
+      direction    TEXT NOT NULL CHECK (direction IN ('debit','credit')),
+      interval     TEXT NOT NULL CHECK (interval IN ('weekly','fortnightly','monthly','quarterly')),
+      anchor_day   INTEGER NOT NULL,
+      anchor_month INTEGER,
+      amount_min   INTEGER NOT NULL,
+      amount_max   INTEGER NOT NULL,
+      last_paid_at INTEGER,
+      status       TEXT NOT NULL CHECK (status IN ('active','ended','dismissed')),
+      created_at   INTEGER NOT NULL,
+      decided_at   INTEGER NOT NULL
+    );
+    CREATE INDEX schedules_by_payee ON schedules (payee_id);
+  `);
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules];
 
 export const LATEST_VERSION = migrations.length + 1;
 
 // Tables created by migrations, dependents first (dropped in this order on restore).
-export const MIGRATED_TABLES = ['duplicate_dismissals', 'unparsed_messages', 'payees', 'accounts'] as const;
+export const MIGRATED_TABLES = ['schedules', 'duplicate_dismissals', 'unparsed_messages', 'payees', 'accounts'] as const;
 
 export async function readVersion(db: SqlExecutor): Promise<number> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
