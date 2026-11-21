@@ -216,7 +216,28 @@ async function v2ToV3(tx: SqlExecutor): Promise<void> {
   await tx.execAsync('PRAGMA user_version = 3');
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3];
+// v3 → v4 (P3, spec §4.2): balance anchors. New columns, then a parser-field backfill:
+// the figures each stored message states are re-read from raw_body. Nothing the user
+// sees on a row changes.
+async function v3ToV4(tx: SqlExecutor): Promise<void> {
+  await tx.execAsync(`
+    ALTER TABLE transactions ADD COLUMN reported_balance_paise INTEGER;
+    ALTER TABLE transactions ADD COLUMN reported_avl_limit_paise INTEGER;
+    ALTER TABLE accounts ADD COLUMN opening_balance_paise INTEGER;
+    ALTER TABLE accounts ADD COLUMN opening_balance_at INTEGER;
+    ALTER TABLE accounts ADD COLUMN credit_limit_paise INTEGER;
+  `);
+  const rows = await tx.getAllAsync<{ id: string; raw_body: string }>('SELECT id, raw_body FROM transactions WHERE raw_body IS NOT NULL');
+  for (const row of rows) {
+    const parsed = parseBankSms(row.raw_body);
+    if (!parsed || (parsed.reportedBalancePaise === null && parsed.reportedAvlLimitPaise === null)) continue;
+    await tx.runAsync('UPDATE transactions SET reported_balance_paise=?, reported_avl_limit_paise=? WHERE id=?',
+      parsed.reportedBalancePaise, parsed.reportedAvlLimitPaise, row.id);
+  }
+  await tx.execAsync('PRAGMA user_version = 4');
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4];
 
 export const LATEST_VERSION = migrations.length + 1;
 

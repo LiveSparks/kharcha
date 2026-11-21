@@ -67,6 +67,6 @@ export function smsTransaction(sender, body, receivedAt, id) {
     merchant: p.merchant, amountPaise: p.amountPaise, direction: p.direction, category: p.category,
     status: p.confidence >= 0.9 ? 'auto' : 'review', accountLast4: p.accountLast4, reference: p.reference,
     counterpartyMasked: p.counterpartyMasked, counterpartyLast4: p.counterpartyLast4, confidence: p.confidence,
-    createdAt: receivedAt, updatedAt: receivedAt, accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, duplicateOf: null, preFlagStatus: null, duplicateCleared: false,
+    createdAt: receivedAt, updatedAt: receivedAt, accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, duplicateOf: null, preFlagStatus: null, duplicateCleared: false, reportedBalancePaise: p.reportedBalancePaise ?? null, reportedAvlLimitPaise: p.reportedAvlLimitPaise ?? null,
   };
 }

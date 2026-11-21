@@ -13,6 +13,11 @@ export interface ParsedSms {
   // digits-only companion for storage and joins.
   counterpartyMasked: string | null;
   counterpartyLast4: string | null;
+  // Figures the bank states after the transaction (WF-4 anchors). Balance is signed
+  // (CR +, DR −); the limit is the available credit limit. Null when not stated, and
+  // only read when the message names an account (wallet/FASTag balances are skipped).
+  reportedBalancePaise: number | null;
+  reportedAvlLimitPaise: number | null;
 }
 
 const amountPattern = /(?:Rs\.?|INR\.?|₹)\s*([\d,]+(?:\.\d+)?)/i;
@@ -561,9 +566,37 @@ export function occurredAtFrom(body: string, receivedAt: number): number | null 
   return built;
 }
 
+// Balance and limit tails (WF-4). These never feed amount selection: that stays with
+// nonTransactionAmount. "Bal" alone needs a word boundary so "balance:" (wallet/FASTag
+// shapes) isn't read here; wallet and tag balances are excluded outright.
+const BALANCE_TAIL = /(?:\bAvl\.?\s*bal|\bAval\s*Bal|\bAvail\.?\s*bal|\bAvailable\s*Bal(?:ance)?|\bAvlBal|(?<![A-Za-z])Bal)\b\.?\s*:?\s*(?:Rs\.?|INR|₹)?\s*:?\s*([\d,]*\d(?:\.\d+)?)\s*(CR|DR)?\b/i;
+const LIMIT_TAIL = /\b(?:Avl|Avail|Available)\.?\s*(?:Limit|Lmt)\b\s*:?\s*(?:Rs\.?|INR|₹)?\s*:?\s*([\d,]*\d(?:\.\d+)?)/i;
+const WALLET = /\b(?:wallet|fastag|tag)\s*bal/i;
+
+function rupeesToPaise(text: string): number | null {
+  const value = Number(text.replace(/,/g, ''));
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
+}
+
+export function reportedFigures(text: string, accountLast4: string | null): Pick<ParsedSms, 'reportedBalancePaise' | 'reportedAvlLimitPaise'> {
+  if (!accountLast4 || WALLET.test(text)) return { reportedBalancePaise: null, reportedAvlLimitPaise: null };
+  const limit = LIMIT_TAIL.exec(text);
+  const balance = BALANCE_TAIL.exec(text);
+  const balancePaise = balance ? rupeesToPaise(balance[1]) : null;
+  return {
+    reportedBalancePaise: balancePaise === null ? null : balance![2]?.toUpperCase() === 'DR' ? -balancePaise : balancePaise,
+    reportedAvlLimitPaise: limit ? rupeesToPaise(limit[1]) : null,
+  };
+}
+
 export function parseBankSms(body: string): ParsedSms | null {
-  // RCS banks (PNB/SBI via carrier agents) send Mathematical Sans-Serif letters.
   const text = (body ?? '').normalize('NFKC');
+  const parsed = parseShape(text);
+  return parsed ? { ...parsed, ...reportedFigures(text, parsed.accountLast4) } : null;
+}
+
+function parseShape(text: string): Omit<ParsedSms, 'reportedBalancePaise' | 'reportedAvlLimitPaise'> | null {
+  // RCS banks (PNB/SBI via carrier agents) send Mathematical Sans-Serif letters (NFKC above).
   if (!isTransactionMessage(text)) return null;
   if (isPending(text) || isFailed(text)) return null;
 

@@ -201,9 +201,9 @@ test('v2 → v3 keeps every row, allows merged and relinks legacy flags', async 
   const db = openDatabase();
   await seedV1(db, seeded);
   assert.equal(await migrate(db, 2), 2);
-  assert.equal(await migrate(db), 3);
-  assert.equal(LATEST_VERSION, 3);
+  assert.equal(await migrate(db, 3), 3);
   assert.equal(await readVersion(db), 3);
+  assert.ok(LATEST_VERSION >= 3);
   const after = await listTransactionRows(db);
   assert.equal(after.length, seeded.length);
   for (const r of seeded) {

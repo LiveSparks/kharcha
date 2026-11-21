@@ -13,7 +13,7 @@ test('multiline Sent shape reads the payee only from the To section', () => {
   const body = 'Sent Rs.142.00\nFrom HDFC Bank A/C *3391\nTo FRESH MART\nOn 01/02/26\nRef 61462000001\nNot You?\nCall 18002586161/SMS BLOCK UPI to 7308080808';
   assert.deepEqual(parseBankSms(body), {
     merchant: 'Fresh Mart', amountPaise: 14200, direction: 'debit', category: 'Transfers',
-    accountLast4: '3391', reference: '61462000001', counterpartyMasked: null, counterpartyLast4: null,
+    accountLast4: '3391', reference: '61462000001', counterpartyMasked: null, counterpartyLast4: null, reportedBalancePaise: null, reportedAvlLimitPaise: null,
     confidence: 0.95,
   });
 });

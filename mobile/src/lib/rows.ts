@@ -33,11 +33,16 @@ export interface TransactionRow {
   duplicate_of: string | null;
   pre_flag_status: RestorableStatus | null;
   duplicate_cleared: number;
+  // v4
+  reported_balance_paise: number | null;
+  reported_avl_limit_paise: number | null;
 }
 
 export interface AccountRow {
   id: string; bank: string; last4: string; kind: Account['kind']; funded_by: string | null;
   name: string | null; created_at: number;
+  // v4 (absent on rows written before it)
+  opening_balance_paise?: number | null; opening_balance_at?: number | null; credit_limit_paise?: number | null;
 }
 
 export interface PayeeRow {
@@ -69,6 +74,7 @@ export function transactionFromRow(row: TransactionRow): Transaction {
     payeeOverrideId: row.payee_override_id ?? null, categoryByUser: !!row.category_by_user,
     duplicateOf: row.duplicate_of ?? null, preFlagStatus: row.pre_flag_status ?? null,
     duplicateCleared: !!row.duplicate_cleared,
+    reportedBalancePaise: row.reported_balance_paise ?? null, reportedAvlLimitPaise: row.reported_avl_limit_paise ?? null,
   };
 }
 
@@ -84,11 +90,15 @@ export function transactionToRow(t: Transaction): TransactionRow {
     category_by_user: t.categoryByUser ? 1 : 0,
     duplicate_of: t.duplicateOf ?? null, pre_flag_status: t.preFlagStatus ?? null,
     duplicate_cleared: t.duplicateCleared ? 1 : 0,
+    reported_balance_paise: t.reportedBalancePaise ?? null, reported_avl_limit_paise: t.reportedAvlLimitPaise ?? null,
   };
 }
 
 export function accountFromRow(row: AccountRow): Account {
-  return { id: row.id, bank: row.bank, last4: row.last4, kind: row.kind, fundedBy: row.funded_by, name: row.name, createdAt: row.created_at };
+  return {
+    id: row.id, bank: row.bank, last4: row.last4, kind: row.kind, fundedBy: row.funded_by, name: row.name, createdAt: row.created_at,
+    openingBalancePaise: row.opening_balance_paise ?? null, openingBalanceAt: row.opening_balance_at ?? null, creditLimitPaise: row.credit_limit_paise ?? null,
+  };
 }
 
 export function payeeFromRow(row: PayeeRow): Payee {

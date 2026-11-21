@@ -6,7 +6,7 @@ import type { SqlDatabase } from './migrations';
 import {
   dismissUnparsedSql, exportSnapshotSql, ingestScanSql, insertTransaction, keepBothSql, linkDebitCardSql, linkUnparsedSql,
   listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, movePayeeSql,
-  renameAccountSql, renamePayeeSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
+  renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
 } from './ledger';
 import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV2 } from './ledger';
 
@@ -59,6 +59,8 @@ export async function movePayee(id: string, target: MoveTarget): Promise<string>
 export async function renamePayee(id: string, name: string | null, category?: Category | null): Promise<void> { await renamePayeeSql(await ledger(), id, name, category); }
 export async function markPayeeNudged(id: string): Promise<void> { await markPayeeNudgedSql(await ledger(), id); }
 export async function renameAccount(id: string, name: string | null): Promise<void> { await renameAccountSql(await ledger(), id, name); }
+export async function setOpeningBalance(id: string, paise: number | null, at: number = Date.now()): Promise<void> { await setOpeningBalanceSql(await ledger(), id, paise, at); }
+export async function setCreditLimit(id: string, paise: number | null): Promise<void> { await setCreditLimitSql(await ledger(), id, paise); }
 export async function linkDebitCard(cardId: string, bankId: string | null): Promise<void> { await linkDebitCardSql(await ledger(), cardId, bankId); }
 
 export async function listBudgets(): Promise<Budget[]> {

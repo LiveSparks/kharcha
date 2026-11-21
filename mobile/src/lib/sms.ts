@@ -54,6 +54,7 @@ export async function readBankSms(senders: SenderRule[], since: number, autoAdd:
       confidence: parsed.confidence, createdAt: now, updatedAt: now,
       // Account and payee resolve at insert (addTransaction), from sender + parser fields.
       accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, ...NOT_A_DUPLICATE,
+      reportedBalancePaise: parsed.reportedBalancePaise, reportedAvlLimitPaise: parsed.reportedAvlLimitPaise,
     });
   }
   return { transactions: result, unparsed };

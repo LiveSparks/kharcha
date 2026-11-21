@@ -40,10 +40,15 @@ export interface Transaction {
   preFlagStatus: RestorableStatus | null;
   // Set by Keep both / Unmerge (informational; the pair table stops re-flagging).
   duplicateCleared: boolean;
+  // Balances (schema v4): what the bank says after this transaction (WF-4 anchors).
+  reportedBalancePaise: number | null;
+  reportedAvlLimitPaise: number | null;
 }
 
 // Defaults for a row that was never flagged.
 export const NOT_A_DUPLICATE = { duplicateOf: null, preFlagStatus: null, duplicateCleared: false } as const;
+// Defaults for a row with no stated balance or limit (manual entries, v1 rows).
+export const NO_FIGURES = { reportedBalancePaise: null, reportedAvlLimitPaise: null } as const;
 
 export type UnparsedStatus = 'pending' | 'added' | 'dismissed';
 
@@ -70,6 +75,11 @@ export interface Account {
   fundedBy: string | null;
   name: string | null;
   createdAt: number;
+  // Balances (schema v4). Opening balance: a user-entered anchor for an account that never
+  // states its balance. Credit limit: entered once for a card.
+  openingBalancePaise: number | null;
+  openingBalanceAt: number | null;
+  creditLimitPaise: number | null;
 }
 
 export type PayeeKind = 'merchant' | 'masked';

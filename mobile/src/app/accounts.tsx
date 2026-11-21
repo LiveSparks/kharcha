@@ -5,6 +5,7 @@ import { Action, Body, Caption, EmptyState, Screen, ScreenHead, SectionTitle } f
 import { accountLabel, debitCardSuggestions, isLive } from '@/lib/resolve';
 import type { Account, AccountKind } from '@/lib/model';
 import { fonts, usePalette } from '@/ui/theme';
+import { AsOf, Figure, figureTitle } from '@/ui/Balances';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
 
@@ -12,11 +13,12 @@ const kindLabels: Record<AccountKind, string> = {
   bank: 'Bank account', credit_card: 'Credit card', debit_card: 'Debit card', unknown: 'Card or account',
 };
 
-// Accounts screen (WF-3): accounts by bank, named here, and the user-confirmed debit
-// card link. The link is only ever suggested, never set on its own.
+// Accounts screen (WF-3, WF-4): accounts by bank with their balance or card outstanding,
+// named here, and the user-confirmed debit card link (only ever suggested, never set on
+// its own). A row opens the account's history.
 export default function Accounts() {
   const p = usePalette();
-  const { accounts, accountsById, transactions, linkDebitCard } = useLedger();
+  const { accounts, accountsById, transactions, balances, linkDebitCard } = useLedger();
   const suggestions = useMemo(() => debitCardSuggestions(accounts, transactions), [accounts, transactions]);
   const counts = useMemo(() => {
     const n = new Map<string, number>();
@@ -43,14 +45,23 @@ export default function Accounts() {
       {accounts.filter(a => a.bank === bank).map(a => {
         const funder = a.fundedBy ? accountsById.get(a.fundedBy) : undefined;
         const n = counts.get(a.id) ?? 0;
+        const b = balances.get(a.id);
+        const prompt = b?.needsOpening ? 'Set opening balance ›' : b?.needsLimit ? 'Set credit limit ›' : null;
         return <View key={a.id} style={{ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.line, gap: 8 }}>
-          <Pressable accessibilityRole="button" accessibilityLabel={`${a.name ? 'Rename' : 'Name'} ${accountLabel(a)}`} onPress={() => router.push({ pathname: '/name', params: { kind: 'account', id: a.id } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{accountLabel(a)}</Text>
-              <Caption>{kindLabels[a.kind]} · ••{a.last4} · {n} {n === 1 ? 'transaction' : 'transactions'}</Caption>
-            </View>
-            <Text style={{ fontFamily: fonts.bodyMedium, color: p.muted, fontSize: 13 }}>{a.name ? 'Rename' : 'Name'}</Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${accountLabel(a)}`} onPress={() => router.push({ pathname: '/account/[id]', params: { id: a.id } })} style={{ flex: 1, minWidth: 0, gap: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.bodyMedium, color: p.ink }}>{accountLabel(a)}</Text>
+                {b && b.amountPaise !== null ? <Figure balance={b} /> : null}
+              </View>
+              <Caption>{kindLabels[a.kind]} · ••{a.last4} · {n} {n === 1 ? 'transaction' : 'transactions'}{b && b.amountPaise !== null ? ` · ${figureTitle(b).toLowerCase()}` : ''}</Caption>
+              {b && b.amountPaise !== null ? <AsOf balance={b} /> : null}
+              {prompt ? <Caption style={{ color: p.review }}>{prompt}</Caption> : null}
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${a.name ? 'Rename' : 'Name'} ${accountLabel(a)}`} onPress={() => router.push({ pathname: '/name', params: { kind: 'account', id: a.id } })} hitSlop={8}>
+              <Text style={{ fontFamily: fonts.bodyMedium, color: p.muted, fontSize: 13 }}>{a.name ? 'Rename' : 'Name'}</Text>
+            </Pressable>
+          </View>
           {funder ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Caption>Draws on {accountLabel(funder)}</Caption>
             <Pressable accessibilityRole="button" onPress={() => void link(a, null)}><Caption style={{ color: p.review }}>Unlink</Caption></Pressable>

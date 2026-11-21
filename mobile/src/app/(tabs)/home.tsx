@@ -6,6 +6,7 @@ import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { isLive } from '@/lib/resolve';
 import { monthLabel, startOfMonth, money } from '@/lib/format';
+import { figureText } from '@/ui/Balances';
 import { useNow } from '@/lib/useNow';
 import { showMessage } from '@/ui/dialog';
 import { HomeSlot } from '@/ui/HomeSlot';
@@ -13,7 +14,7 @@ import { HomeSlot } from '@/ui/HomeSlot';
 export default function Home() {
   const p = usePalette();
   const now = useNow();
-  const { transactions, budgets, preferences, scan, busy, error, clearError } = useLedger();
+  const { transactions, budgets, preferences, scan, busy, error, clearError, net } = useLedger();
   const start = startOfMonth(now);
   const current = transactions.filter(t => t.occurredAt >= start && isLive(t));
   const spent = current.filter(t => t.direction === 'debit').reduce((sum, t) => sum + t.amountPaise, 0);
@@ -26,6 +27,10 @@ export default function Home() {
   }
   return <Screen>
     <ScreenHead title={`${monthLabel(now)}, so far`} action={{ icon: 'plus', label: 'Add a transaction', onPress: () => router.push('/manual') }} />
+    {net !== null ? <Pressable accessibilityRole="button" accessibilityLabel={`Net ${figureText(net)}. Open accounts.`} onPress={() => router.push('/accounts')} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, marginBottom: 10 }}>
+      <Body muted>Net across accounts</Body>
+      <Text style={{ fontFamily: fonts.mono, fontSize: 16, color: net < 0 ? p.debit : p.ink }}>{figureText(net)} ›</Text>
+    </Pressable> : null}
     <HomeSlot />
     <SummarySlip spent={spent} received={received} budget={budget} lastScanAt={preferences.lastScanAt} />
     {error ? <Pressable onPress={clearError} style={{ marginTop: 17, padding: 12, backgroundColor: p.debitSoft, borderRadius: 10 }}><Body>{error}  ×</Body></Pressable> : null}

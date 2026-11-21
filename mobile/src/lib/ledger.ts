@@ -43,7 +43,9 @@ export async function insertTransaction(db: SqlDatabase, t: Transaction): Promis
     const exists = await tx.getFirstAsync('SELECT 1 FROM transactions WHERE id=? OR (source_hash IS NOT NULL AND source_hash=?)', t.id, t.sourceHash);
     if (exists) return;
     const { account, payee } = identityFor(t);
-    const accountId = account ? await upsertAccount(tx, account, t.createdAt) : null;
+    // A manual entry has no sender to derive an account from; it may carry one the user
+    // chose (logging a balance gap on that account, WF-4).
+    const accountId = account ? await upsertAccount(tx, account, t.createdAt) : t.sender ? null : t.accountId ?? null;
     const payeeId = payee ? await upsertPayee(tx, payee, t.createdAt) : null;
     added = await insertRow(tx, 'transactions', transactionToRow({ ...t, accountId, payeeId, payeeOverrideId: null })) > 0;
   });
@@ -195,6 +197,28 @@ export async function renamePayeeSql(db: SqlExecutor, id: string, name: string |
 
 export async function markPayeeNudgedSql(db: SqlExecutor, id: string, at: number = Date.now()): Promise<void> {
   await db.runAsync('UPDATE payees SET nudged_at=? WHERE id=? AND nudged_at IS NULL', at, id);
+}
+
+// Balances (P3). An opening balance anchors a bank account that never states one; a
+// credit limit turns a card's available limit into an outstanding figure. null clears.
+export function validPaise(paise: number | null, label: string, allowNegative = false): number | null {
+  if (paise === null) return null;
+  if (!Number.isSafeInteger(paise) || (!allowNegative && paise <= 0)) throw new Error(`Enter a valid ${label}.`);
+  return paise;
+}
+
+export async function setOpeningBalanceSql(db: SqlExecutor, id: string, paise: number | null, at: number): Promise<void> {
+  const value = validPaise(paise, 'opening balance', true);
+  const row = await db.getFirstAsync<{ kind: string }>('SELECT kind FROM accounts WHERE id=?', id);
+  if (row?.kind !== 'bank') throw new Error('Only a bank account takes an opening balance.');
+  await db.runAsync('UPDATE accounts SET opening_balance_paise=?, opening_balance_at=? WHERE id=?', value, value === null ? null : at, id);
+}
+
+export async function setCreditLimitSql(db: SqlExecutor, id: string, paise: number | null): Promise<void> {
+  const value = validPaise(paise, 'credit limit');
+  const row = await db.getFirstAsync<{ kind: string }>('SELECT kind FROM accounts WHERE id=?', id);
+  if (row?.kind !== 'credit_card') throw new Error('Only a credit card takes a credit limit.');
+  await db.runAsync('UPDATE accounts SET credit_limit_paise=? WHERE id=?', value, id);
 }
 
 export async function renameAccountSql(db: SqlExecutor, id: string, name: string | null): Promise<void> {

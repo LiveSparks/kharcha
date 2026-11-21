@@ -3,8 +3,12 @@
 // parse → real scan ingest into a fresh ledger, then checks the phase targets and
 // records baselines.
 //
-//   KHARCHA_CORPUS=/path/to/export.csv KHARCHA_REPLAY_OUT=/outside/the/repo npm run replay
+//   KHARCHA_CORPUS=/path/to/export.csv KHARCHA_REPLAY_OUT=/outside/the/repo \
+//   KHARCHA_PSEUDONYMS=/outside/the/repo/pseudonyms.md npm run replay
 //
+// Account-level targets (P3) name accounts by the invented digits the docs use; the
+// private pseudonym key (a markdown table `| \`doc\` | \`real\` |`) translates them. Without
+// it those targets are skipped and only the per-account gap baseline is recorded.
 // Skips (exit 0) when KHARCHA_CORPUS is unset, so CI never needs the corpus. Nothing it
 // reads or writes may live inside the repository: the export is real SMS.
 import { createHash } from 'node:crypto';
@@ -22,9 +26,10 @@ import { V1_SCHEMA, migrate, readVersion } from '../src/lib/migrations.ts';
 import { ingestScanSql, listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows } from '../src/lib/ledger.ts';
 import { v1TransactionRow } from '../src/lib/rows.ts';
 import { debitCardSuggestions, effectivePayeeId, namingNudge, payeeStats, unnamedCount } from '../src/lib/resolve.ts';
+import { computeBalance, largeGap } from '../src/lib/balances.ts';
 
-const PHASE = 'P2';
-const LATEST = 3;
+const PHASE = 'P3';
+const LATEST = 4;
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const corpus = process.env.KHARCHA_CORPUS;
 if (!corpus) {
@@ -97,7 +102,7 @@ for (const sms of messages) {
     status: parsed.confidence >= 0.9 ? 'auto' : 'review', accountLast4: parsed.accountLast4, reference: parsed.reference,
     counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
     confidence: parsed.confidence, createdAt: sms.receivedAt, updatedAt: sms.receivedAt,
-    accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, duplicateOf: null, preFlagStatus: null, duplicateCleared: false,
+    accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, duplicateOf: null, preFlagStatus: null, duplicateCleared: false, reportedBalancePaise: parsed.reportedBalancePaise, reportedAvlLimitPaise: parsed.reportedAvlLimitPaise,
   });
 }
 // A pre-P1 install flagged with the old rule: same amount and direction within 24h,
@@ -200,6 +205,46 @@ check(badUnread === 0, `${badUnread} Couldn't-read rows lack an amount or a verb
 check(unread.length <= 100, `Couldn't read holds ${unread.length} messages (limit 100)`);
 check(unread.length === unparsed.length, `Couldn't read stored ${unread.length} of ${unparsed.length}`);
 
+// P3: balances. Anchors survive the upgrade unchanged (backfill = ingest).
+const figures = rows => rows.map(t => `${t.id}|${t.reportedBalancePaise}|${t.reportedAvlLimitPaise}`).sort().join('\n');
+check(figures(rowsA) === figures(rowsB), 'upgrade backfill and scan ingest disagree on stated balances/limits');
+// The doc digits the gate names → the corpus's real ones (private key, outside the repo).
+const pseudonyms = new Map();
+if (process.env.KHARCHA_PSEUDONYMS && existsSync(process.env.KHARCHA_PSEUDONYMS)) {
+  for (const m of readFileSync(process.env.KHARCHA_PSEUDONYMS, 'utf8').matchAll(/^\| `\D*(\d{4})` \| `\D*(\d{4})` \|/gm)) pseudonyms.set(m[1], m[2]);
+}
+const byDoc = (bank, doc) => pseudonyms.has(doc) ? accountsB.find(a => a.bank === bank && a.last4 === pseudonyms.get(doc)) : undefined;
+const anchorCount = (account, direction, field) => rowsB.filter(t => t.accountId === account.id && t.direction === direction && t[field] !== null).length;
+const rowCount = (account, direction) => rowsB.filter(t => t.accountId === account.id && t.direction === direction).length;
+const anchorTargets = {};
+const pnb = byDoc('PNB', '7712'), card = byDoc('HDFC', '8812'), hdfc = byDoc('HDFC', '3391'), icici = byDoc('ICICI', '6119');
+if (pnb && card && hdfc && icici) {
+  // WF-4 counted the classic tail shapes only; every extra anchor here is another real balance tail.
+  anchorTargets['PNB ••7712 debits'] = `${anchorCount(pnb, 'debit', 'reportedBalancePaise')}/${rowCount(pnb, 'debit')}`;
+  anchorTargets['PNB ••7712 credits'] = `${anchorCount(pnb, 'credit', 'reportedBalancePaise')}/${rowCount(pnb, 'credit')}`;
+  anchorTargets['HDFC ••8812 debits'] = `${anchorCount(card, 'debit', 'reportedBalancePaise')}/${rowCount(card, 'debit')}`;
+  anchorTargets['HDFC ••3391 credits'] = `${anchorCount(hdfc, 'credit', 'reportedBalancePaise')}/${rowCount(hdfc, 'credit')}`;
+  anchorTargets['ICICI ••6119 debits (limit)'] = `${anchorCount(icici, 'debit', 'reportedAvlLimitPaise')}/${rowCount(icici, 'debit')}`;
+  check(anchorCount(pnb, 'debit', 'reportedBalancePaise') >= 15, 'PNB ••7712: fewer debit anchors than WF-4 (15)');
+  check(anchorCount(card, 'debit', 'reportedBalancePaise') >= 42, 'HDFC ••8812: fewer debit anchors than WF-4 (42)');
+  check(anchorCount(hdfc, 'credit', 'reportedBalancePaise') >= 31, 'HDFC ••3391: fewer credit anchors than WF-4 (31)');
+  check(anchorCount(icici, 'debit', 'reportedAvlLimitPaise') === rowCount(icici, 'debit'), 'ICICI ••6119: a spend without its Avl Limit');
+} else {
+  anchorTargets.skipped = 'KHARCHA_PSEUDONYMS not set or missing an account';
+}
+// Gaps per account, with the user-confirmed ••8812 → ••3391 link applied when known.
+const linked = accountsB.map(a => card && hdfc && a.id === card.id ? { ...a, kind: 'debit_card', fundedBy: hdfc.id } : a);
+const gapMetrics = {};
+const reviewGaps = [];
+const asOfNow = Math.max(...rowsB.map(t => t.occurredAt));
+for (const a of linked) {
+  const b = computeBalance(a, rowsB, linked, asOfNow);
+  if (b.kind === null) continue;
+  const label = `${a.bank}:${a.last4}:${a.kind}`;
+  gapMetrics[label] = { kind: b.kind, anchors: b.anchors, gaps: b.gaps.length, sumAbsGapPaise: b.gaps.reduce((n, g) => n + g.amountPaise, 0), figurePaise: b.amountPaise };
+  for (const g of b.gaps) if (largeGap(g, b.amountPaise)) reviewGaps.push({ account: label, at: new Date(g.occurredAt).toISOString(), paise: g.direction === 'credit' ? g.amountPaise : -g.amountPaise });
+}
+
 const stats = payeeStats(rowsA);
 const nudge = namingNudge(payeesA, stats);
 const summary = {
@@ -223,13 +268,14 @@ const summary = {
     farDifferentPayee: farDifferentPayee.length,
     statusAfterRelink: Object.fromEntries(['auto', 'review', 'duplicate_review'].map(s => [s, rowsA.filter(t => t.status === s).length])),
   },
+  balances: { anchorTargets, gapMetrics, largeGapsForReview: reviewGaps.length },
   couldntRead: { count: unread.length, bySender: Object.fromEntries([...new Set(unread.map(m => bankFamily(m.sender)))].sort().map(f => [f, unread.filter(m => bankFamily(m.sender) === f).length])) },
   failures,
 };
 
 // Baseline: the first run records it; later runs must not move.
 const baselinePath = join(out, `baseline-${PHASE}.json`);
-const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead });
+const tracked = s => ({ corpus: s.corpus, accounts: s.accounts, payees: s.payees, rows: s.rows, duplicates: s.duplicates, couldntRead: s.couldntRead, balances: s.balances });
 if (!existsSync(baselinePath)) {
   if (!failures.length) writeFileSync(baselinePath, `${JSON.stringify(tracked(summary), null, 2)}\n`);
   summary.baseline = failures.length ? 'not written (targets failed)' : `written ${baselinePath}`;
@@ -250,6 +296,7 @@ for (const sms of messages) {
   csv.push([sms.index, sms.datetime, sms.sender, ...fields.map(esc), esc(sms.body)].join(','));
 }
 writeFileSync(join(out, 'kharcha-transactions.csv'), `${csv.join('\n')}\n`);
+writeFileSync(join(out, 'large-gaps.json'), `${JSON.stringify(reviewGaps, null, 2)}\n`);
 writeFileSync(join(out, 'replay.json'), `${JSON.stringify(summary, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 2));
 console.log(failures.length ? `replay ${PHASE}: FAIL (${failures.length})` : `replay ${PHASE}: PASS · ${out}`);

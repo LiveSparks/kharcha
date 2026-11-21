@@ -5,11 +5,13 @@ import {
   addTransaction, dismissUnparsed, exportSnapshot, getDatabase, ingestScan, keepBoth, linkDebitCard, linkUnparsed, listAccounts,
   listBudgets, listPayees, listSenders, listTransactions, listUnparsed, loadPreferences, markPayeeNudged, mergeDuplicate, movePayee,
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
-  setTransactionCategory, setTransactionStatus, unmerge,
+  setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, unmerge,
 } from '@/lib/database';
 import type { MoveTarget, Snapshot } from '@/lib/database';
-import { DEFAULT_PREFERENCES, NOT_A_DUPLICATE } from '@/lib/model';
+import { DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
 import type { Account, Budget, Category, Direction, Payee, Preferences, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
+import { computeBalances, netWorth } from '@/lib/balances';
+import type { AccountBalance } from '@/lib/balances';
 import { duplicatePairs } from '@/lib/duplicates';
 import type { DuplicatePair } from '@/lib/duplicates';
 import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
@@ -34,13 +36,16 @@ interface LedgerContextValue {
   // Duplicate review and Couldn't read (P2).
   pairs: DuplicatePair[];
   unparsed: UnparsedMessage[];
+  // Balances (P3): per account, and Home's Net (null when no account has a figure).
+  balances: ReadonlyMap<string, AccountBalance>;
+  net: number | null;
   budgets: Budget[];
   senders: SenderRule[];
   preferences: Preferences;
   refresh: () => Promise<void>;
   scan: (full?: boolean) => Promise<number>;
   enableSms: () => Promise<boolean>;
-  addManual: (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt?: number) => Promise<string>;
+  addManual: (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt?: number, accountId?: string | null) => Promise<string>;
   addFromUnparsed: (unparsedId: string, merchant: string, rupees: number, direction: Direction, category: Category, occurredAt: number) => Promise<void>;
   mergeDuplicate: (flaggedId: string, survivorId: string) => Promise<void>;
   keepBoth: (id: string) => Promise<void>;
@@ -53,6 +58,8 @@ interface LedgerContextValue {
   markPayeeNudged: (id: string) => Promise<void>;
   renameAccount: (id: string, name: string | null) => Promise<void>;
   linkDebitCard: (cardId: string, bankId: string | null) => Promise<void>;
+  setOpeningBalance: (id: string, paise: number | null, at?: number) => Promise<void>;
+  setCreditLimit: (id: string, paise: number | null) => Promise<void>;
   setBudget: (category: Category, amountPaise: number) => Promise<void>;
   removeBudget: (category: Category) => Promise<void>;
   setSender: (sender: SenderRule) => Promise<void>;
@@ -80,6 +87,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [senders, setSenders] = useState<SenderRule[]>([]);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const scanBusyRef = useRef(false);
+  // When the ledger was last read; balance staleness is judged against it.
+  const [loadedAt, setLoadedAt] = useState(0);
 
   const refresh = useCallback(async () => {
     const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences] = await Promise.all([
@@ -92,6 +101,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setBudgets(nextBudgets);
     setSenders(nextSenders);
     setPreferences(nextPreferences);
+    setLoadedAt(Date.now());
   }, []);
 
   useEffect(() => {
@@ -143,7 +153,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     return granted;
   }, [refresh]);
 
-  const addManual = useCallback(async (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt = Date.now()) => {
+  const addManual = useCallback(async (merchant: string, rupees: number, direction: Direction, category: Category, occurredAt = Date.now(), accountId: string | null = null) => {
     const amountPaise = Math.round(rupees * 100);
     if (!merchant.trim() || !Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a merchant and an amount above zero.');
     const now = Date.now();
@@ -152,7 +162,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       occurredAt, merchant: merchant.trim(), amountPaise, direction, category,
       status: 'manual', accountLast4: null, counterpartyMasked: null, counterpartyLast4: null,
       reference: null, confidence: 1, createdAt: now, updatedAt: now,
-      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: true, ...NOT_A_DUPLICATE });
+      accountId, payeeId: null, payeeOverrideId: null, categoryByUser: true, ...NOT_A_DUPLICATE, ...NO_FIGURES });
     await refresh();
     return id;
   }, [refresh]);
@@ -179,6 +189,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       markPayeeNudged: after(markPayeeNudged),
       renameAccount: after(renameAccount),
       linkDebitCard: after(linkDebitCard),
+      setOpeningBalance: after(setOpeningBalance),
+      setCreditLimit: after(setCreditLimit),
       mergeDuplicate: after(mergeDuplicate),
       keepBoth: after(keepBoth),
       unmerge: after(unmerge),
@@ -196,8 +208,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       payeeOf: (t: Transaction) => { const id = effectivePayeeId(t); return (id && payeesById.get(id)) || null; },
       accountOf: (t: Transaction) => (t.accountId && accountsById.get(t.accountId)) || null,
       pairs: duplicatePairs(transactions),
+      ...(() => { const balances = computeBalances(transactions, accounts, loadedAt); return { balances, net: netWorth(balances.values()) }; })(),
     };
-  }, [transactions, payees, accounts]);
+  }, [transactions, payees, accounts, loadedAt]);
 
   const changeBudget = useCallback(async (category: Category, amountPaise: number) => {
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) throw new Error('Enter a budget above zero.');

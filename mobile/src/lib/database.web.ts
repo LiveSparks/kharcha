@@ -6,8 +6,8 @@ import { mergeAccountKind } from './banks';
 import { identityFor, overrideKey } from './identity';
 import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
-import { parseBankSms } from './parser';
-import { validateSnapshot } from './ledger';
+import { parseBankSms, reportedFigures } from './parser';
+import { validateSnapshot, validPaise } from './ledger';
 import type { IngestResult, MoveTarget, ScanBatch, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
 import { accountFromRow, budgetFromRow, payeeFromRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
@@ -42,6 +42,14 @@ function upgrade(s: SnapshotV2): SnapshotV2 {
     for (const patch of relinkLegacyFlags(rows, autoAdd)) byIdMap.set(patch.id, applyPatch(byIdMap.get(patch.id)!, patch, byIdMap.get(patch.id)!.updatedAt));
     out.transactions = rows.map(t => transactionToRow(byIdMap.get(t.id)!));
   }
+  if (s.schemaVersion < 4) {
+    // v3 → v4 twin: re-read stated balances/limits from stored messages.
+    out.transactions = out.transactions.map(r => {
+      const parsed = r.raw_body ? parseBankSms(r.raw_body) : null;
+      return { ...r, reported_balance_paise: parsed?.reportedBalancePaise ?? null, reported_avl_limit_paise: parsed?.reportedAvlLimitPaise ?? null };
+    });
+    out.accounts = out.accounts.map(a => ({ opening_balance_paise: null, opening_balance_at: null, credit_limit_paise: null, ...a }));
+  }
   return out;
 }
 
@@ -51,7 +59,7 @@ function preferenceRows(preferences: Partial<Preferences>): SnapshotV2['preferen
 
 function upsertAccount(s: SnapshotV2, a: AccountIdentity, now: number): string {
   const existing = s.accounts.find(row => row.bank === a.bank && row.last4 === a.last4);
-  if (!existing) { s.accounts.push({ id: a.id, bank: a.bank, last4: a.last4, kind: a.kind, funded_by: null, name: null, created_at: now }); return a.id; }
+  if (!existing) { s.accounts.push({ id: a.id, bank: a.bank, last4: a.last4, kind: a.kind, funded_by: null, name: null, created_at: now, opening_balance_paise: null, opening_balance_at: null, credit_limit_paise: null }); return a.id; }
   existing.kind = mergeAccountKind(existing.kind, a.kind);
   return existing.id;
 }
@@ -77,6 +85,7 @@ function fromV1(v1: SnapshotV1): SnapshotV2 {
       accountId: account ? upsertAccount(s, account, t.createdAt) : null,
       payeeId: payee ? upsertPayee(s, payee, t.createdAt) : null,
       payeeOverrideId: null, categoryByUser: t.status === 'manual', ...NOT_A_DUPLICATE,
+      ...reportedFigures(t.rawBody ?? '', t.accountLast4),
     }));
   }
   return s;
@@ -132,7 +141,7 @@ export async function addTransaction(transaction: Transaction): Promise<boolean>
   const { account, payee } = identityFor(transaction);
   snapshot.transactions.push(transactionToRow({
     ...transaction,
-    accountId: account ? upsertAccount(snapshot, account, transaction.createdAt) : null,
+    accountId: account ? upsertAccount(snapshot, account, transaction.createdAt) : transaction.sender ? null : transaction.accountId ?? null,
     payeeId: payee ? upsertPayee(snapshot, payee, transaction.createdAt) : null,
     payeeOverrideId: null,
   }));
@@ -266,6 +275,22 @@ export async function renamePayee(id: string, name: string | null, category?: Ca
 }
 export async function markPayeeNudged(id: string): Promise<void> {
   update(s => { const p = payee(s, id); p.nudged_at ??= Date.now(); });
+}
+export async function setOpeningBalance(id: string, paise: number | null, at: number = Date.now()): Promise<void> {
+  const value = validPaise(paise, 'opening balance', true);
+  update(s => {
+    const a = account(s, id);
+    if (a.kind !== 'bank') throw new Error('Only a bank account takes an opening balance.');
+    a.opening_balance_paise = value; a.opening_balance_at = value === null ? null : at;
+  });
+}
+export async function setCreditLimit(id: string, paise: number | null): Promise<void> {
+  const value = validPaise(paise, 'credit limit');
+  update(s => {
+    const a = account(s, id);
+    if (a.kind !== 'credit_card') throw new Error('Only a credit card takes a credit limit.');
+    a.credit_limit_paise = value;
+  });
 }
 export async function renameAccount(id: string, name: string | null): Promise<void> {
   const clean = name === null ? null : validateName(name);
