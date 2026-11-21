@@ -10,6 +10,7 @@ import { Platform, View } from 'react-native';
 import { LedgerProvider } from '@/state/LedgerProvider';
 import { LoadingScreen } from '@/ui/Kit';
 import { usePalette } from '@/ui/theme';
+import { DialogHost } from '@/ui/DialogHost';
 
 export default function RootLayout() {
   const [loaded] = useFonts({ BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold,
@@ -20,5 +21,6 @@ export default function RootLayout() {
   return <SafeAreaProvider><LedgerProvider>
     <StatusBar style={p.bg === '#121412' ? 'light' : 'dark'} />
     {Platform.OS === 'web' ? <View style={{ flex: 1, alignSelf: 'center', width: '100%', maxWidth: 520, backgroundColor: p.bg }}>{stack}</View> : stack}
+    <DialogHost />
   </LedgerProvider></SafeAreaProvider>;
 }
