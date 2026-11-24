@@ -7,10 +7,12 @@ import {
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
   setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, setTransfer, unmerge,
   addSchedule, endSchedule, listSchedules, updateScheduleTerms, setHabitHidden,
+  addCategory, deleteCategory, listCategories,
 } from '@/lib/database';
 import type { MoveTarget, ScheduleTerms, Snapshot } from '@/lib/database';
-import { DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
-import type { Account, Budget, Category, Direction, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
+import { BUILT_IN_COLORS, CATEGORIES, DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
+import { liveCategories } from '@/lib/categories';
+import type { Account, Budget, Category, CategoryDef, Direction, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
 import { computeBalances, netWorth } from '@/lib/balances';
 import type { AccountBalance } from '@/lib/balances';
 import { detectSeries, matchSchedules, suggestionsFrom } from '@/lib/schedules';
@@ -59,6 +61,11 @@ interface LedgerContextValue {
   asOf: number;
   setHabitHidden: (payeeIds: readonly string[], hidden: boolean) => Promise<void>;
   budgets: Budget[];
+  // Your categories (v9), in order; deleted ones are left out.
+  categories: CategoryDef[];
+  categoryColor: (name: Category) => string;
+  addCategory: (name: string, color?: string) => Promise<string>;
+  deleteCategory: (name: Category, into: Category) => Promise<void>;
   senders: SenderRule[];
   preferences: Preferences;
   refresh: () => Promise<void>;
@@ -127,6 +134,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [payees, setPayees] = useState<Payee[]>([]);
   const [unparsed, setUnparsed] = useState<UnparsedMessage[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [allCategories, setAllCategories] = useState<CategoryDef[]>(() => CATEGORIES.map((name, position) => ({ name, color: BUILT_IN_COLORS[name], position, mergedInto: null })));
   // When the ledger was last read: the "now" detection and matching are computed at.
   const [revisionAt, setRevisionAt] = useState(0);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -138,11 +146,12 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [loadedAt, setLoadedAt] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences, nextSchedules] = await Promise.all([
-      listTransactions(), listAccounts(), listPayees(), listUnparsed(), listBudgets(), listSenders(), loadPreferences(), listSchedules(),
+    const [nextTransactions, nextAccounts, nextPayees, nextUnparsed, nextBudgets, nextSenders, nextPreferences, nextSchedules, nextCategories] = await Promise.all([
+      listTransactions(), listAccounts(), listPayees(), listUnparsed(), listBudgets(), listSenders(), loadPreferences(), listSchedules(), listCategories(),
     ]);
     setTransactions(nextTransactions);
     setSchedules(nextSchedules);
+    setAllCategories(nextCategories);
     setRevisionAt(Date.now());
     setUnparsed(nextUnparsed);
     setAccounts(nextAccounts);
@@ -253,6 +262,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       updateScheduleTerms: after(updateScheduleTerms),
       endSchedule: after(endSchedule),
       setHabitHidden: after(setHabitHidden),
+      addCategory: after(addCategory),
+      deleteCategory: after(deleteCategory),
     };
   }, [refresh]);
 
@@ -294,7 +305,13 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   }, [refresh]);
 
+  const categoryInfo = useMemo(() => {
+    const colors = new Map(allCategories.map(c => [c.name, c.color]));
+    return { categories: liveCategories(allCategories), categoryColor: (name: Category) => colors.get(name) ?? BUILT_IN_COLORS[name] ?? '#A9A495' };
+  }, [allCategories]);
+
   const value = useMemo<LedgerContextValue>(() => ({
+    ...categoryInfo,
     ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, asOf: revisionAt, budgets, senders, preferences, refresh, scan, enableSms,
     addManual, addFromUnparsed, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
@@ -303,7 +320,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference]);
+  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference, categoryInfo]);
 
   return <LedgerContext.Provider value={value}><ScanProgressContext.Provider value={scanStatus}>{children}</ScanProgressContext.Provider></LedgerContext.Provider>;
 }

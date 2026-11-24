@@ -7,7 +7,6 @@ import { PickerSheet } from '@/ui/Sheet';
 import { fonts, usePalette } from '@/ui/theme';
 import type { Palette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
-import { CATEGORIES } from '@/lib/model';
 import type { Category, Direction } from '@/lib/model';
 import { accountLabel } from '@/lib/resolve';
 import { dateLabel, money, signedMoney } from '@/lib/format';
@@ -23,7 +22,7 @@ type Sheet = 'period' | 'account' | 'category' | 'direction' | null;
 export default function Ledger() {
   const p = usePalette();
   const now = useNow();
-  const { transactions, payeesById, accountsById, accounts } = useLedger();
+  const { transactions, payeesById, accountsById, accounts, categories } = useLedger();
   const [filter, setFilter] = useState<LedgerFilter>(NO_FILTER);
   const [sheet, setSheet] = useState<Sheet>(null);
   const entries = useMemo(() => ledgerEntries(transactions, payeesById, accountsById, filter, now),
@@ -86,7 +85,7 @@ export default function Ledger() {
         ...accounts.map(a => ({ key: a.id, label: accountLabel(a), on: filter.accountId === a.id, pick: () => set({ accountId: a.id }) }))]} />
     <PickerSheet open={sheet === 'category'} title="Category" onClose={() => setSheet(null)}
       options={[{ key: 'any', label: 'All categories', on: !filter.category, pick: () => set({ category: null }) },
-        ...CATEGORIES.map(c => ({ key: c, label: c, dot: c, on: filter.category === c, pick: () => set({ category: c }) }))]} />
+        ...categories.map(({ name: c }) => ({ key: c, label: c, dot: c, on: filter.category === c, pick: () => set({ category: c }) }))]} />
     <PickerSheet open={sheet === 'direction'} title="Money" onClose={() => setSheet(null)}
       options={([[null, 'In and out'], ['debit', 'Spent'], ['credit', 'Received']] as [Direction | null, string][]).map(([d, label]) =>
         ({ key: d ?? 'any', label, on: filter.direction === d, pick: () => set({ direction: d }) }))} />

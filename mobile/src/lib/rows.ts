@@ -1,4 +1,4 @@
-import type { Account, Budget, Category, Payee, RestorableStatus, Schedule, SenderRule, Transaction, UnparsedMessage } from './model';
+import type { Account, Budget, Category, CategoryDef, Payee, RestorableStatus, Schedule, SenderRule, Transaction, UnparsedMessage } from './model';
 
 // Storage-shaped rows (snake_case, one key per column). SQLite returns these, backup
 // snapshot schema 2 carries them verbatim, and the web preview stores them, so a row
@@ -71,6 +71,7 @@ export interface ScheduleRow {
 export interface BudgetRow { category: Category; amount_paise: number }
 export interface SenderRow { address: string; label: string; enabled: number }
 export interface PreferenceRow { key: string; value: string }
+export interface CategoryRow { name: string; color: string; position: number; merged_into: string | null; created_at: number }
 
 export function transactionFromRow(row: TransactionRow): Transaction {
   return {
@@ -150,6 +151,9 @@ export function scheduleToRow(s: Schedule): ScheduleRow {
   };
 }
 
+export function categoryFromRow(row: CategoryRow): CategoryDef {
+  return { name: row.name, color: row.color, position: row.position, mergedInto: row.merged_into ?? null };
+}
 export function budgetFromRow(row: BudgetRow): Budget { return { category: row.category, amountPaise: row.amount_paise }; }
 export function senderFromRow(row: SenderRow): SenderRule { return { address: row.address, label: row.label, enabled: !!row.enabled }; }
 

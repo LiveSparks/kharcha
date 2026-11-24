@@ -23,10 +23,7 @@ export function usePalette(): Palette {
   return useColorScheme() === 'light' ? palettes.light : palettes.dark;
 }
 
-export const categoryColors: Record<string, string> = {
-  'Food & dining': '#F08A52', Groceries: '#84C06C', Travel: '#6FB1DE', Bills: '#B39AD6',
-  Shopping: '#EC86AE', Health: '#5FCFC0', Entertainment: '#E2C056', Transfers: '#A9A495',
-};
+export { BUILT_IN_COLORS as categoryColors } from '@/lib/model';
 
 export const fonts = {
   display: 'BricolageGrotesque_700Bold',

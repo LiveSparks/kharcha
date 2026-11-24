@@ -1,9 +1,10 @@
 import React from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { CATEGORIES } from '@/lib/model';
+import { router } from 'expo-router';
 import type { Category } from '@/lib/model';
 import { CategoryDot, Caption, Label } from './Kit';
 import { fonts, usePalette } from './theme';
+import { useLedger } from '@/state/LedgerProvider';
 
 export function Field({ label, value, onChangeText, placeholder, numeric = false, multiline = false, autoCapitalize = 'sentences' }: {
   label: string; value: string; onChangeText: (value: string) => void; placeholder?: string; numeric?: boolean; multiline?: boolean;
@@ -16,10 +17,22 @@ export function Field({ label, value, onChangeText, placeholder, numeric = false
       borderWidth: 1, borderColor: p.strongLine, color: p.ink, backgroundColor: p.surface, fontFamily: multiline ? fonts.monoRegular : fonts.body, fontSize: 15, lineHeight: multiline ? 21 : undefined }} /></View>;
 }
 
+// The label row links to Categories, where you add or delete them.
+function PickerLabel({ children }: { children: React.ReactNode }) {
+  const p = usePalette();
+  return <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+    <Label>{children}</Label>
+    <Pressable accessibilityRole="button" accessibilityLabel="Edit categories" hitSlop={8} onPress={() => router.push('/categories')}><Text style={{ fontFamily: fonts.bodyMedium, fontSize: 13, color: p.review }}>Edit ›</Text></Pressable>
+  </View>;
+}
+
 export function CategoryPicker({ value, onChange }: { value: Category; onChange: (category: Category) => void }) {
   const p = usePalette();
-  return <View style={{ gap: 9 }}><Label>Category</Label><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-    {CATEGORIES.map(category => <Pressable accessibilityRole="radio" accessibilityState={{ checked: value === category }} key={category} onPress={() => onChange(category)} style={{ flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 35, paddingHorizontal: 10, borderRadius: 9,
+  const { categories } = useLedger();
+  // A row may still carry a category that no longer exists; keep it visible as chosen.
+  const names = categories.some(c => c.name === value) ? categories.map(c => c.name) : [value, ...categories.map(c => c.name)];
+  return <View style={{ gap: 9 }}><PickerLabel>Category</PickerLabel><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+    {names.map(category => <Pressable accessibilityRole="radio" accessibilityState={{ checked: value === category }} key={category} onPress={() => onChange(category)} style={{ flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 35, paddingHorizontal: 10, borderRadius: 9,
       backgroundColor: value === category ? p.leaf : p.surface, borderWidth: value === category ? 0 : 1, borderColor: p.line }}><CategoryDot category={category} /><Text style={{ fontFamily: fonts.bodyMedium, fontSize: 13, color: value === category ? p.onLeaf : p.ink }}>{category}</Text></Pressable>)}
   </View></View>;
 }
@@ -29,8 +42,9 @@ export function Note({ children }: { children: React.ReactNode }) { return <Capt
 // Optional category (a payee's default): "None" keeps each row's own category.
 export function OptionalCategoryPicker({ label, value, onChange }: { label: string; value: Category | null; onChange: (category: Category | null) => void }) {
   const p = usePalette();
-  const options: (Category | null)[] = [null, ...CATEGORIES];
-  return <View style={{ gap: 9 }}><Label>{label}</Label><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+  const { categories } = useLedger();
+  const options: (Category | null)[] = [null, ...categories.map(c => c.name)];
+  return <View style={{ gap: 9 }}><PickerLabel>{label}</PickerLabel><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
     {options.map(category => <Pressable accessibilityRole="radio" accessibilityState={{ checked: value === category }} key={category ?? 'none'} onPress={() => onChange(category)} style={{ flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 35, paddingHorizontal: 10, borderRadius: 9,
       backgroundColor: value === category ? p.leaf : p.surface, borderWidth: value === category ? 0 : 1, borderColor: p.line }}>{category ? <CategoryDot category={category} /> : null}<Text style={{ fontFamily: fonts.bodyMedium, fontSize: 13, color: value === category ? p.onLeaf : p.ink }}>{category ?? 'None'}</Text></Pressable>)}
   </View></View>;

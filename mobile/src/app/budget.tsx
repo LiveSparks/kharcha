@@ -3,16 +3,15 @@ import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Action, Screen, ScreenHead } from '@/ui/Kit';
 import { CategoryPicker, Field, Note } from '@/ui/Forms';
-import { CATEGORIES } from '@/lib/model';
 import type { Category } from '@/lib/model';
 import { useLedger } from '@/state/LedgerProvider';
 import { confirmAction, showMessage } from '@/ui/dialog';
 
 export default function BudgetEditor() {
   const params = useLocalSearchParams<{ category?: string }>();
-  const { budgets, setBudget, removeBudget } = useLedger();
+  const { budgets, setBudget, removeBudget, categories } = useLedger();
   const existing = budgets.find(b => b.category === params.category);
-  const [category, setCategory] = useState<Category>(CATEGORIES.includes(params.category as Category) ? params.category as Category : 'Food & dining');
+  const [category, setCategory] = useState<Category>(params.category && categories.some(c => c.name === params.category) ? params.category : categories[0]?.name ?? 'Shopping');
   const [amount, setAmount] = useState(existing ? String(existing.amountPaise / 100) : '');
   const [busy, setBusy] = useState(false);
   async function save() {

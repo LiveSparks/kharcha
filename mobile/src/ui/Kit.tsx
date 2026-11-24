@@ -5,7 +5,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { router } from 'expo-router';
 import type { Category, Transaction } from '@/lib/model';
 import { dateLabel, money, signedMoney, timeLabel } from '@/lib/format';
-import { categoryColors, fonts, usePalette } from './theme';
+import { fonts, usePalette } from './theme';
 import type { Palette } from './theme';
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
@@ -83,7 +83,8 @@ export function Action({ title, onPress, icon, variant = 'primary', disabled = f
 }
 
 export function CategoryDot({ category, size = 8 }: { category: Category; size?: number }) {
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: categoryColors[category] }} />;
+  const { categoryColor } = useLedger();
+  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: categoryColor(category) }} />;
 }
 
 export function CategoryChip({ category, onPress }: { category: Category; onPress?: () => void }) {

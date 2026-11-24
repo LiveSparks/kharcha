@@ -7,6 +7,7 @@ import { HDFC_UPI_SENDER, SENDER_RENAMES, regradePatches } from './regrade.ts';
 import { transactionFromRow } from './rows.ts';
 import type { SqlValue, TransactionRow } from './rows.ts';
 import type { AccountKind } from './model';
+import { BUILT_IN_COLORS, CATEGORIES } from './model.ts';
 
 // Schema versioning with PRAGMA user_version (app-modification spec §4.1).
 //
@@ -307,12 +308,33 @@ export async function addTransferAccount(tx: SqlExecutor): Promise<void> {
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders, addTransferAccount];
+// v8 → v9: categories become the user's list (operator feedback, 2026-11-24), seeded with
+// the built-ins in their usual order. A deleted category stays as a row with merged_into
+// set, so messages the parser still files under it land in its replacement.
+export async function addCategories(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  await tx.execAsync(`
+    CREATE TABLE categories (
+      name        TEXT PRIMARY KEY,
+      color       TEXT NOT NULL,
+      position    INTEGER NOT NULL,
+      merged_into TEXT,
+      created_at  INTEGER NOT NULL
+    );
+  `);
+  const now = Date.now();
+  for (const [index, name] of CATEGORIES.entries()) {
+    await tx.runAsync('INSERT INTO categories (name,color,position,merged_into,created_at) VALUES (?,?,?,NULL,?)', name, BUILT_IN_COLORS[name], index, now);
+  }
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders, addTransferAccount, addCategories];
 
 export const LATEST_VERSION = migrations.length + 1;
 
 // Tables created by migrations, dependents first (dropped in this order on restore).
-export const MIGRATED_TABLES = ['schedules', 'duplicate_dismissals', 'unparsed_messages', 'payees', 'accounts'] as const;
+export const MIGRATED_TABLES = ['categories', 'schedules', 'duplicate_dismissals', 'unparsed_messages', 'payees', 'accounts'] as const;
 
 export async function readVersion(db: SqlExecutor): Promise<number> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');

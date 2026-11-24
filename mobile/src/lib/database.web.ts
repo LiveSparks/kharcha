@@ -1,5 +1,6 @@
-import { DEFAULT_PREFERENCES, DEFAULT_SENDERS, NOT_A_DUPLICATE } from './model';
-import type { Account, Budget, Category, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import { BUILT_IN_COLORS, CATEGORIES, CATEGORY_SWATCHES, DEFAULT_PREFERENCES, DEFAULT_SENDERS, NOT_A_DUPLICATE } from './model';
+import { checkDelete, mergeTargets, validateCategoryName } from './categories';
+import type { Account, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { DUPLICATE_WINDOW_MS, applyPatch, flagDuplicates, keepBothDecision, mergeDecision, pairKey, relinkLegacyFlags, unmergeDecision } from './duplicates';
 import type { DuplicateDecision } from './duplicates';
 import { mergeAccountKind } from './banks';
@@ -11,7 +12,7 @@ import { HDFC_UPI_SENDER, SENDER_RENAMES, regradePatches } from './regrade';
 import { transferSides, validateSnapshot, validPaise } from './ledger';
 import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
-import { accountFromRow, budgetFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
+import { accountFromRow, budgetFromRow, categoryFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
 import { validateTerms } from './schedules';
 import type { AccountRow, PayeeRow, TransactionRow } from './rows';
 
@@ -28,6 +29,7 @@ function empty(): SnapshotV2 {
     schema: 2, schemaVersion: LATEST_VERSION, transactions: [], budgets: [],
     senders: DEFAULT_SENDERS.map(s => ({ address: s.address, label: s.label, enabled: Number(s.enabled) })),
     preferences: [], accounts: [], payees: [], unparsed_messages: [], duplicate_dismissals: [], schedules: [], exportedAt: 0,
+    categories: CATEGORIES.map((name, position) => ({ name, color: BUILT_IN_COLORS[name], position, merged_into: null, created_at: 0 })),
   };
 }
 
@@ -76,6 +78,11 @@ function upgrade(s: SnapshotV2): SnapshotV2 {
     if (hdfc && !senders.some(x => x.address === HDFC_UPI_SENDER.address)) senders.push({ ...HDFC_UPI_SENDER, enabled: hdfc.enabled });
     if (JSON.stringify(senders) !== JSON.stringify(out.senders)) out.preferences = out.preferences.map(p => p.key === 'lastScanAt' ? { ...p, value: '0' } : p);
     out.senders = senders;
+  }
+  // v8 → v9 twin: categories become a stored list, seeded with the built-ins.
+  if (s.schemaVersion < 9 || !out.categories) {
+    const now = Date.now();
+    out.categories = CATEGORIES.map((name, position) => ({ name, color: BUILT_IN_COLORS[name], position, merged_into: null, created_at: now }));
   }
   return out;
 }
@@ -172,8 +179,44 @@ export async function addTransaction(transaction: Transaction): Promise<boolean>
     payeeId: payee ? upsertPayee(snapshot, payee, transaction.createdAt) : null,
     payeeOverrideId: null,
   }));
+  followCategoryMerges(snapshot);
   write(snapshot);
   return true;
+}
+
+// New rows the parser filed under a deleted category move to its replacement (v9).
+function followCategoryMerges(s: SnapshotV2): void {
+  const targets = mergeTargets((s.categories ?? []).map(categoryFromRow));
+  if (!targets.size) return;
+  for (const t of s.transactions) { const to = targets.get(t.category); if (to) t.category = to; }
+}
+
+export async function listCategories(): Promise<CategoryDef[]> {
+  return (read().categories ?? []).map(categoryFromRow).sort((a, b) => a.position - b.position);
+}
+export async function addCategory(name: string, color: string = CATEGORY_SWATCHES[0]): Promise<string> {
+  let result = '';
+  update(s => {
+    const all = (s.categories ?? []).map(categoryFromRow);
+    const clean = validateCategoryName(name, all);
+    const position = Math.max(-1, ...all.map(c => c.position)) + 1;
+    s.categories ??= [];
+    const gone = s.categories.find(c => c.merged_into && c.name.toLowerCase() === clean.toLowerCase());
+    if (gone) Object.assign(gone, { merged_into: null, color, position });
+    else s.categories.push({ name: clean, color, position, merged_into: null, created_at: Date.now() });
+    result = gone?.name ?? clean;
+  });
+  return result;
+}
+export async function deleteCategory(name: Category, into: Category): Promise<void> {
+  update(s => {
+    checkDelete(name, into, (s.categories ?? []).map(categoryFromRow));
+    const now = Date.now();
+    for (const t of s.transactions) if (t.category === name) Object.assign(t, { category: into, updated_at: now });
+    for (const p of s.payees) if (p.category === name) p.category = into;
+    s.budgets = s.budgets.some(b => b.category === into) ? s.budgets.filter(b => b.category !== name) : s.budgets.map(b => b.category === name ? { ...b, category: into } : b);
+    for (const c of s.categories ?? []) if (c.name === name || c.merged_into === name) c.merged_into = into;
+  });
 }
 
 export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> {
@@ -222,6 +265,7 @@ export async function ingestScan(batch: ScanBatch, _onProgress?: (progress: Inge
         amount_paise: m.amountPaise, status: 'pending', transaction_id: null, created_at: Date.now() });
       result.unparsed++;
     }
+    followCategoryMerges(s);
   });
   return result;
 }

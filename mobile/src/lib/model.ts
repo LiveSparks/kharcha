@@ -3,7 +3,25 @@ export const CATEGORIES = [
   'Health', 'Entertainment', 'Transfers',
 ] as const;
 
-export type Category = (typeof CATEGORIES)[number];
+// The built-in categories: what the parser assigns and what a new ledger starts with.
+// Since schema v9 the list is the user's (categories table); a category is any name in it.
+export type Category = string;
+export const TRANSFERS: Category = 'Transfers';
+
+export const BUILT_IN_COLORS: Record<string, string> = {
+  'Food & dining': '#F08A52', Groceries: '#84C06C', Travel: '#6FB1DE', Bills: '#B39AD6',
+  Shopping: '#EC86AE', Health: '#5FCFC0', Entertainment: '#E2C056', Transfers: '#A9A495',
+};
+// Colours a new category can take (the built-ins' plus a few more).
+export const CATEGORY_SWATCHES = ['#F08A52', '#84C06C', '#6FB1DE', '#B39AD6', '#EC86AE', '#5FCFC0', '#E2C056', '#A9A495', '#E0685F', '#7C8CE0', '#C9A27A', '#9BCB4F'] as const;
+
+export interface CategoryDef {
+  name: Category;
+  color: string;
+  position: number;
+  // A deleted category points at the one its rows moved to; new reads follow it.
+  mergedInto: Category | null;
+}
 export type Direction = 'debit' | 'credit';
 export type TransactionStatus = 'auto' | 'review' | 'duplicate_review' | 'ignored' | 'manual' | 'merged';
 // The status a flagged or merged row returns to (Keep both / Unmerge).

@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { CategoryDot, EmptyState, Screen, ScreenHead, SectionTitle } from '@/ui/Kit';
-import { CATEGORIES } from '@/lib/model';
 import { money } from '@/lib/format';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
@@ -21,14 +20,16 @@ function periodStart(period: Period): number {
 
 export default function Insights() {
   const p = usePalette();
-  const { transactions, categoryOf, habits, asOf } = useLedger();
+  const { transactions, categoryOf, categories, categoryColor, habits, asOf } = useLedger();
   const [period, setPeriod] = useState<Period>('Month');
   const data = useMemo(() => {
-    const totals = Object.fromEntries(CATEGORIES.map(c => [c, 0])) as Record<typeof CATEGORIES[number], number>;
+    const totals = new Map<string, number>();
     const included = transactions.filter(t => t.occurredAt >= periodStart(period) && isLive(t) && t.direction === 'debit' && !isOwnTransfer(t));
-    for (const t of included) totals[categoryOf(t)] += t.amountPaise;
-    return { entries: included.length, categories: CATEGORIES.map(category => ({ category, amount: totals[category] })).filter(row => row.amount > 0).sort((a, b) => b.amount - a.amount) };
-  }, [transactions, period, categoryOf]);
+    for (const t of included) totals.set(categoryOf(t), (totals.get(categoryOf(t)) ?? 0) + t.amountPaise);
+    // Your categories first, then any older name a row still carries.
+    const names = [...categories.map(c => c.name), ...[...totals.keys()].filter(n => !categories.some(c => c.name === n))];
+    return { entries: included.length, categories: names.map(category => ({ category, amount: totals.get(category) ?? 0 })).filter(row => row.amount > 0).sort((a, b) => b.amount - a.amount) };
+  }, [transactions, period, categoryOf, categories]);
   const total = data.categories.reduce((sum, row) => sum + row.amount, 0);
   return <Screen>
     <ScreenHead title="Where it went" />
@@ -70,7 +71,3 @@ function HabitsSection({ habits, now }: { habits: Habit[]; now: number }) {
   </View>;
 }
 
-function categoryColor(category: string) {
-  const colors: Record<string, string> = { 'Food & dining': '#F08A52', Groceries: '#84C06C', Travel: '#6FB1DE', Bills: '#B39AD6', Shopping: '#EC86AE', Health: '#5FCFC0', Entertainment: '#E2C056', Transfers: '#A9A495' };
-  return colors[category];
-}

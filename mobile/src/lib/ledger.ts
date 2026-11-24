@@ -1,13 +1,15 @@
 import { identityFor, overrideKey } from './identity.ts';
 import { LATEST_VERSION, MIGRATED_TABLES, V1_SCHEMA, migrate, migrations, readVersion, upsertAccount, upsertPayee } from './migrations.ts';
 import type { SqlDatabase, SqlExecutor } from './migrations.ts';
-import { accountFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, transactionFromRow, transactionToRow, unparsedFromRow, v1TransactionRow } from './rows.ts';
-import type { AccountRow, BudgetRow, DismissalRow, PayeeRow, PreferenceRow, ScheduleRow, SenderRow, SqlValue, TransactionRow, UnparsedRow } from './rows.ts';
+import { accountFromRow, categoryFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, transactionFromRow, transactionToRow, unparsedFromRow, v1TransactionRow } from './rows.ts';
+import type { AccountRow, BudgetRow, CategoryRow, DismissalRow, PayeeRow, PreferenceRow, ScheduleRow, SenderRow, SqlValue, TransactionRow, UnparsedRow } from './rows.ts';
 import { DUPLICATE_WINDOW_MS, flagDuplicates, keepBothDecision, mergeDecision, pairKey, unmergeDecision } from './duplicates.ts';
 import type { DuplicateDecision } from './duplicates.ts';
 import { validateName } from './resolve.ts';
 import { validateTerms } from './schedules.ts';
-import type { Account, Budget, Category, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import { checkDelete, validateCategoryName } from './categories.ts';
+import { CATEGORY_SWATCHES } from './model.ts';
+import type { Account, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 
 // SQL ledger operations shared by the app (expo-sqlite) and the node harness
 // (node:sqlite). Raw parser fields are written once, at insert, and never again.
@@ -49,6 +51,7 @@ export async function insertTransaction(db: SqlDatabase, t: Transaction): Promis
     const accountId = account ? await upsertAccount(tx, account, t.createdAt) : t.sender ? null : t.accountId ?? null;
     const payeeId = payee ? await upsertPayee(tx, payee, t.createdAt) : null;
     added = await insertRow(tx, 'transactions', transactionToRow({ ...t, accountId, payeeId, payeeOverrideId: null })) > 0;
+    if (added) await followCategoryMerges(tx);
   });
   return added;
 }
@@ -110,8 +113,47 @@ export async function ingestScanSql(db: SqlDatabase, batch: ScanBatch, now: numb
         "INSERT OR IGNORE INTO unparsed_messages (id,source_hash,sender,raw_body,received_at,amount_paise,status,created_at) VALUES (?,?,?,?,?,?,'pending',?)",
         m.id, m.sourceHash, m.sender, m.rawBody, m.receivedAt, m.amountPaise, now)).changes;
     }
+    await followCategoryMerges(tx);
   });
   return result;
+}
+
+// --- Categories (schema v9) ----------------------------------------------------------
+
+// New rows the parser filed under a deleted category move to its replacement.
+export async function followCategoryMerges(tx: SqlExecutor): Promise<void> {
+  if (!await tx.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='categories'")) return;
+  await tx.runAsync(`UPDATE transactions SET category=(SELECT merged_into FROM categories c WHERE c.name=transactions.category)
+    WHERE category IN (SELECT name FROM categories WHERE merged_into IS NOT NULL)`);
+}
+
+export async function listCategoryRows(db: SqlExecutor): Promise<CategoryDef[]> {
+  return (await db.getAllAsync<CategoryRow>('SELECT * FROM categories ORDER BY position, name')).map(categoryFromRow);
+}
+
+export async function addCategorySql(db: SqlExecutor, name: string, color: string = CATEGORY_SWATCHES[0]): Promise<string> {
+  const all = await listCategoryRows(db);
+  const clean = validateCategoryName(name, all);
+  const position = Math.max(-1, ...all.map(c => c.position)) + 1;
+  // A name deleted earlier comes back as itself (its old rows stay where they moved).
+  const gone = all.find(c => c.mergedInto && c.name.toLowerCase() === clean.toLowerCase());
+  if (gone) await db.runAsync('UPDATE categories SET merged_into=NULL, color=?, position=? WHERE name=?', color, position, gone.name);
+  else await db.runAsync('INSERT INTO categories (name,color,position,merged_into,created_at) VALUES (?,?,?,NULL,?)', clean, color, position, Date.now());
+  return gone?.name ?? clean;
+}
+
+// Delete: every row, payee default and budget under `name` moves to `into`. A budget
+// already set on `into` wins; the deleted one's is dropped.
+export async function deleteCategorySql(db: SqlDatabase, name: Category, into: Category): Promise<void> {
+  await db.withExclusiveTransactionAsync(async tx => {
+    checkDelete(name, into, await listCategoryRows(tx));
+    const now = Date.now();
+    await tx.runAsync('UPDATE transactions SET category=?, updated_at=? WHERE category=?', into, now, name);
+    await tx.runAsync('UPDATE payees SET category=? WHERE category=?', into, name);
+    if (await tx.getFirstAsync('SELECT 1 FROM budgets WHERE category=?', into)) await tx.runAsync('DELETE FROM budgets WHERE category=?', name);
+    else await tx.runAsync('UPDATE budgets SET category=? WHERE category=?', into, name);
+    await tx.runAsync('UPDATE categories SET merged_into=? WHERE name=? OR merged_into=?', into, name, name);
+  });
 }
 
 // Leaving the duplicate states through a plain status change drops the pair link.
@@ -317,6 +359,8 @@ export interface SnapshotV2 {
   duplicate_dismissals?: DismissalRow[];
   // P4
   schedules?: ScheduleRow[];
+  // v9
+  categories?: CategoryRow[];
   exportedAt: number;
 }
 
@@ -359,6 +403,7 @@ export async function exportSnapshotSql(db: SqlExecutor): Promise<SnapshotV2> {
     ...tables.has('unparsed_messages') ? { unparsed_messages: await read<UnparsedRow>('unparsed_messages') } : {},
     ...tables.has('duplicate_dismissals') ? { duplicate_dismissals: await read<DismissalRow>('duplicate_dismissals') } : {},
     ...tables.has('schedules') ? { schedules: await read<ScheduleRow>('schedules') } : {},
+    ...tables.has('categories') ? { categories: await read<CategoryRow>('categories') } : {},
     exportedAt: Date.now(),
   };
 }
@@ -386,10 +431,14 @@ export async function restoreSnapshotSql(db: SqlDatabase, input: unknown): Promi
       return;
     }
     // Parents before children so the references hold.
-    for (const table of ['accounts', 'payees', 'transactions', 'unparsed_messages', 'duplicate_dismissals', 'schedules', 'budgets', 'senders', 'preferences'] as const) {
+    for (const table of ['categories', 'accounts', 'payees', 'transactions', 'unparsed_messages', 'duplicate_dismissals', 'schedules', 'budgets', 'senders', 'preferences'] as const) {
       const rows = (snapshot[table] ?? []) as unknown as Record<string, unknown>[];
       if (!rows.length) continue;
       const columns = new Set((await tx.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map(c => c.name));
+      // A table newer than the snapshot's own version is filled by the migrations after.
+      if (!columns.size) continue;
+      // The v9 step seeded the built-ins; the snapshot's own list replaces them.
+      if (table === 'categories') await tx.runAsync('DELETE FROM categories');
       for (const row of rows) await insertRow(tx, table, row, columns);
     }
   });
