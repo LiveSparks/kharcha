@@ -144,8 +144,9 @@ export interface Preferences {
 
 export const DEFAULT_SENDERS: SenderRule[] = [
   { address: 'HDFCBK', label: 'HDFC Bank', enabled: true },
-  { address: 'VM-SBIUPI', label: 'SBI · UPI', enabled: true },
-  { address: 'AX-ICICIT', label: 'ICICI Bank', enabled: true },
+  { address: 'HDFCBN', label: 'HDFC Bank · UPI', enabled: true },
+  { address: 'SBIUPI', label: 'SBI · UPI', enabled: true },
+  { address: 'ICICIT', label: 'ICICI Bank', enabled: true },
   { address: 'PNBSMS', label: 'PNB', enabled: true },
 ];
 

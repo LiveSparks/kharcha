@@ -65,3 +65,10 @@ test('scores credit messages and caps confidence without a contextual amount', (
   const fallback = parseBankSms('Credited to A/C X3381 from ACME. Ref 123456789012. INR 500.00');
   assert.equal(fallback?.confidence, 0.68);
 });
+
+test('a card spend without a reference number still clears the auto-add bar', () => {
+  const result = parseBankSms('Rs 1,250.00 spent on ICICI Bank Card XX4321 on 05-Nov-26 at BLUE TOKAI COFFEE. Avl Lmt: Rs 40,000.00. To dispute, call 18001080.');
+  assert.equal(result?.reference, null);
+  assert.equal(result?.accountLast4, '4321');
+  assert.ok(result && result.confidence >= 0.9);
+});

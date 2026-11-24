@@ -1,4 +1,5 @@
 import type { Direction } from './model';
+import { isMandateEcho } from './parser.ts';
 
 // "Couldn't read" capture (WF-5, spec §5.2). An allowed-sender SMS that parseBankSms
 // rejected is kept for the user when it states an amount and a transaction verb and
@@ -12,7 +13,7 @@ const NOT_YET = /\b(?:will be (?:debited|credited)|upcoming|has requested|reques
 const EXCLUDE = /\b(cashback|offers?|pre-?approved|loans?|is due)\b|https?:\/\/|\b(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|cutt\.ly|rb\.gy|is\.gd|[a-z0-9-]+\.(?:ly|io|gl|gy|me))\/\S/i;
 
 export function isUnreadTransaction(body: string): boolean {
-  return AMOUNT.test(body) && VERB.test(body) && !EXCLUDE.test(body) && !NOT_YET.test(body);
+  return AMOUNT.test(body) && VERB.test(body) && !EXCLUDE.test(body) && !NOT_YET.test(body) && !isMandateEcho(body);
 }
 
 const DEBIT_VERB = /\b(debited|spent|sent|paid|withdrawn)\b/i;

@@ -7,6 +7,7 @@ import { identityFor, overrideKey } from './identity';
 import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
 import { parseBankSms, reportedFigures } from './parser';
+import { HDFC_UPI_SENDER, SENDER_RENAMES, regradePatches } from './regrade';
 import { validateSnapshot, validPaise } from './ledger';
 import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
@@ -54,6 +55,28 @@ function upgrade(s: SnapshotV2): SnapshotV2 {
   }
   // v5 → v6 twin: *Not a habit* defaults off.
   out.payees = out.payees.map(p => ({ habit_hidden: 0, ...p }));
+  if (s.schemaVersion < 7) {
+    // v6 → v7 twin: the one-time re-check and bank-code sender rules.
+    const autoAddPref = out.preferences.find(p => p.key === 'autoAdd');
+    const autoAdd = autoAddPref ? JSON.parse(autoAddPref.value) !== false : true;
+    const patches = new Map(regradePatches(out.transactions.map(transactionFromRow), autoAdd).map(p => [p.id, p]));
+    const now = Date.now();
+    out.transactions = out.transactions.map(r => {
+      const p = patches.get(r.id);
+      return p ? { ...r, status: p.status, duplicate_of: p.duplicateOf, pre_flag_status: p.preFlagStatus, confidence: p.confidence, updated_at: now } : r;
+    });
+    let senders = [...out.senders];
+    for (const [from, to] of SENDER_RENAMES) {
+      const old = senders.find(x => x.address === from);
+      if (!old) continue;
+      senders = senders.filter(x => x.address !== from);
+      if (!senders.some(x => x.address === to)) senders.push({ ...old, address: to });
+    }
+    const hdfc = senders.find(x => x.address === 'HDFCBK');
+    if (hdfc && !senders.some(x => x.address === HDFC_UPI_SENDER.address)) senders.push({ ...HDFC_UPI_SENDER, enabled: hdfc.enabled });
+    if (JSON.stringify(senders) !== JSON.stringify(out.senders)) out.preferences = out.preferences.map(p => p.key === 'lastScanAt' ? { ...p, value: '0' } : p);
+    out.senders = senders;
+  }
   return out;
 }
 

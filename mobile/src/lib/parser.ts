@@ -79,6 +79,14 @@ function isTransactionMessage(body: string): boolean {
 function isPending(body: string): boolean { return pendingPattern.test(body); }
 function isFailed(body: string): boolean { return failedPattern.test(body); }
 
+// Auto-debit mandate echoes (operator, 2026-11-24). "AutoPay (E-mandate) Success! For
+// <merchant> Txn Amt:…" restates a card debit that the bank also reports in its normal
+// "Spent Rs… From HDFC Bank Card" template, so booking it doubled the spend and filled
+// Duplicates every month. Reminders ("will be deducted", "Mandate Set") never parsed.
+// "UPI Mandate: Sent Rs…" is not an echo: it is the only message for that debit.
+const mandateEchoPattern = /\bAuto\s*Pay\s*\(\s*E-?\s*mandate\s*\)\s*Success/i;
+export function isMandateEcho(body: string): boolean { return mandateEchoPattern.test(body.normalize('NFKC')); }
+
 function firstMatch(patterns: RegExp[], body: string): RegExpMatchArray | null {
   for (const pattern of patterns) {
     const match = body.match(pattern);
@@ -498,9 +506,11 @@ function transactionMerchant(body: string): string {
 }
 
 function transactionConfidence(merchant: string | null, accountLast4: string | null, reference: string | null, contextual: boolean): number {
+  // A reference number is a nice-to-have, not a requirement (operator, 2026-11-24):
+  // many card spends carry none. Merchant + account clears the auto-add bar (0.9).
   let base = 0.45;
   if (merchant && accountLast4 && reference) base = 0.95;
-  else if (merchant && accountLast4) base = 0.84;
+  else if (merchant && accountLast4) base = 0.9;
   else if (merchant) base = 0.68;
   return contextual ? base : Math.min(base, 0.68);
 }
@@ -598,7 +608,7 @@ export function parseBankSms(body: string): ParsedSms | null {
 function parseShape(text: string): Omit<ParsedSms, 'reportedBalancePaise' | 'reportedAvlLimitPaise'> | null {
   // RCS banks (PNB/SBI via carrier agents) send Mathematical Sans-Serif letters (NFKC above).
   if (!isTransactionMessage(text)) return null;
-  if (isPending(text) || isFailed(text)) return null;
+  if (isPending(text) || isFailed(text) || isMandateEcho(text)) return null;
 
   for (const shape of shapes) {
     const result = shape(text);

@@ -3,6 +3,7 @@ import { identityFor } from './identity.ts';
 import type { AccountIdentity, PayeeIdentity } from './identity.ts';
 import { relinkLegacyFlags } from './duplicates.ts';
 import { parseBankSms } from './parser.ts';
+import { HDFC_UPI_SENDER, SENDER_RENAMES, regradePatches } from './regrade.ts';
 import { transactionFromRow } from './rows.ts';
 import type { SqlValue, TransactionRow } from './rows.ts';
 import type { AccountKind } from './model';
@@ -271,7 +272,35 @@ export async function addHabitHidden(tx: SqlExecutor): Promise<void> {
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden];
+// v6 → v7: the one-time re-check (regrade.ts) and bank-code sender rules. Senders that
+// were never read before have history to catch up on, so the next scan reads the
+// whole inbox again (ingest skips messages it already holds, by source hash).
+export async function regradeAndSenders(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  const autoAddPref = await tx.getFirstAsync<{ value: string }>("SELECT value FROM preferences WHERE key='autoAdd'");
+  const autoAdd = autoAddPref ? JSON.parse(autoAddPref.value) !== false : true;
+  const rows = (await tx.getAllAsync<TransactionRow>('SELECT * FROM transactions')).map(transactionFromRow);
+  const now = Date.now();
+  for (const p of regradePatches(rows, autoAdd)) {
+    await tx.runAsync('UPDATE transactions SET status=?, duplicate_of=?, pre_flag_status=?, confidence=?, updated_at=? WHERE id=?',
+      p.status, p.duplicateOf, p.preFlagStatus, p.confidence, now, p.id);
+  }
+  let changed = false;
+  for (const [from, to] of SENDER_RENAMES) {
+    const r = await tx.runAsync('INSERT OR IGNORE INTO senders (address,label,enabled) SELECT ?, label, enabled FROM senders WHERE address=?', to, from);
+    const d = await tx.runAsync('DELETE FROM senders WHERE address=?', from);
+    changed ||= r.changes > 0 || d.changes > 0;
+  }
+  const hdfc = await tx.getFirstAsync<{ enabled: number }>("SELECT enabled FROM senders WHERE address='HDFCBK'");
+  if (hdfc) {
+    const r = await tx.runAsync('INSERT OR IGNORE INTO senders (address,label,enabled) VALUES (?,?,?)', HDFC_UPI_SENDER.address, HDFC_UPI_SENDER.label, hdfc.enabled);
+    changed ||= r.changes > 0;
+  }
+  if (changed) await tx.runAsync("UPDATE preferences SET value='0' WHERE key='lastScanAt'");
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders];
 
 export const LATEST_VERSION = migrations.length + 1;
 

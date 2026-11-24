@@ -92,11 +92,10 @@ test('ATM withdrawals have no merchant even when an ATM name is present', () => 
   assert.equal(parsed?.accountLast4, '8812');
 });
 
-test('executed AutoPay mandates are debits with the billed merchant', () => {
+test('an AutoPay success echo is not booked: the card-spend message carries that debit', () => {
+  // Operator, 2026-11-24: every echo in the corpus has a same-amount card-spend twin.
   const body = 'AutoPay (E-mandate) Success!\nFor Google Workspace \nTxn Amt:INR325.68\nDt:03/07/2025\nVia:HDFC Bank DC 8812\nSI Hub ID: AbCdEfGh12\nTnC';
-  const parsed = parseBankSms(body);
-  assert.deepEqual([parsed?.direction, parsed?.amountPaise, parsed?.merchant, parsed?.accountLast4],
-    ['debit', 32568, 'Google Workspace', '8812']);
+  assert.equal(parseBankSms(body), null);
 });
 
 test('card refunds come back as credits to the merchant', () => {

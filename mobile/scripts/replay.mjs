@@ -30,7 +30,7 @@ import { v1TransactionRow } from '../src/lib/rows.ts';
 import { computeBalance, largeGap } from '../src/lib/balances.ts';
 import { byId, debitCardSuggestions, effectivePayeeId, namingNudge, payeeLabel, payeeStats, unnamedCount } from '../src/lib/resolve.ts';
 
-const PHASE = 'P5';
+const PHASE = 'v7';
 const LATEST = LATEST_VERSION;
 // P4: a payee that must never be a Schedule (the frequent grocer, WF-6). Its real name
 // lives in the private pseudonym key, so the gate session passes it in.
@@ -199,7 +199,9 @@ const farDifferentPayee = far.filter(f => {
   const a = effectivePayeeId(f.t), b = effectivePayeeId(f.partner);
   return a && b && a !== b;
 });
-check(flagsB.length === 86, `expected 86 duplicate flags, got ${flagsB.length}`);
+// v7 (2026-11-24): AutoPay (E-mandate) Success echoes are no longer booked, which drops
+// the 20 echo/card-spend pairs from the P2 target of 86.
+check(flagsB.length === 66, `expected 66 duplicate flags, got ${flagsB.length}`);
 check(far.length === 11, `expected 11 flags more than 30 min apart, got ${far.length}`);
 check(farDifferentPayee.length === 0, `${farDifferentPayee.length} flags pair different payees more than 30 min apart`);
 check(ingest.flagged === flagsB.length, `ingest reported ${ingest.flagged} flags, ledger holds ${flagsB.length}`);
@@ -271,8 +273,9 @@ for (const p of workspace) await renamePayeeSql(fresh, p.id, 'Google Workspace')
 const namedPayees = byId(await listPayeeRows(fresh));
 const named = detectSeries(rowsB, namedPayees, replayNow).map(c => describe(c, namedPayees));
 const workspaceSeries = named.filter(c => c.payee === 'Google Workspace');
-check(workspaceSeries.length === 1 && workspaceSeries[0].hits === 22 && workspaceSeries[0].interval === 'monthly',
-  `named Workspace: expected one 22-hit monthly series, got ${JSON.stringify(workspaceSeries.map(c => `${c.interval}:${c.hits}`))}`);
+// 21 monthly charges (Feb 2025 – Oct 2026); the 22nd hit was an echo before v7.
+check(workspaceSeries.length === 1 && workspaceSeries[0].hits === 21 && workspaceSeries[0].interval === 'monthly',
+  `named Workspace: expected one 21-hit monthly series, got ${JSON.stringify(workspaceSeries.map(c => `${c.interval}:${c.hits}`))}`);
 check(named.length === 8, `expected 8 schedule candidates (Workspace named), got ${named.length}`);
 check(named.filter(c => !c.lapsed).length === 5, `expected 5 active candidates, got ${named.filter(c => !c.lapsed).length}`);
 check(named.filter(c => c.lapsed).length === 3, `expected 3 lapsed candidates, got ${named.filter(c => c.lapsed).length}`);

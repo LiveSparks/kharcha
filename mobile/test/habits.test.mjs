@@ -200,13 +200,13 @@ async function habitsOf(db) {
 
 test('v5 → v6: only adds payees.habit_hidden, defaulting off', async () => {
   assert.equal(HABIT_VERSION, 6);
-  assert.equal(LATEST_VERSION, HABIT_VERSION);
+  assert.ok(LATEST_VERSION >= HABIT_VERSION);
   const db = openDatabase();
   await seedV1(db);
   await migrate(db, HABIT_VERSION - 1);
   const before = await db.getAllAsync('SELECT * FROM payees ORDER BY id');
   assert.ok(before.length > 0);
-  await migrate(db);
+  await migrate(db, HABIT_VERSION);
   assert.equal(await readVersion(db), 6);
   const after = await db.getAllAsync('SELECT * FROM payees ORDER BY id');
   assert.deepEqual(after.map(({ habit_hidden, ...rest }) => rest), before);
@@ -251,6 +251,6 @@ test('a v5 backup (no habit_hidden column) restores and migrates with Habits on'
   await restored.execAsync(V1_SCHEMA);
   await migrate(restored);
   await restoreSnapshotSql(restored, v5);
-  assert.equal(await readVersion(restored), 6);
+  assert.equal(await readVersion(restored), LATEST_VERSION);
   assert.ok((await listPayeeRows(restored)).every(p => p.habitHidden === false));
 });
