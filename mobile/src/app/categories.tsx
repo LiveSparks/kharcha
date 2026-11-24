@@ -8,6 +8,7 @@ import { useLedger } from '@/state/LedgerProvider';
 import { CATEGORY_SWATCHES, TRANSFERS } from '@/lib/model';
 import type { Category } from '@/lib/model';
 import { confirmAction, showMessage } from '@/ui/dialog';
+import { isLive } from '@/lib/resolve';
 
 // Your categories (v9): add one with a colour, or delete one and say where its
 // transactions go. Transfers stays: the transfer panel depends on it.
@@ -20,7 +21,7 @@ export default function Categories() {
   const [deleting, setDeleting] = useState<Category | null>(null);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const t of transactions) m.set(categoryOf(t), (m.get(categoryOf(t)) ?? 0) + 1);
+    for (const t of transactions) if (isLive(t)) m.set(categoryOf(t), (m.get(categoryOf(t)) ?? 0) + 1);
     return m;
   }, [transactions, categoryOf]);
 

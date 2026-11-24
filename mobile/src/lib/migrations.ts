@@ -245,8 +245,10 @@ async function v3ToV4(tx: SqlExecutor): Promise<void> {
 // so its place in the list doesn't fix its number.
 export async function addSchedules(tx: SqlExecutor): Promise<void> {
   const version = await readVersion(tx);
+  // IF NOT EXISTS: an early P4 test build created this table without recording the
+  // version, and the step must not fail on such a ledger (same columns).
   await tx.execAsync(`
-    CREATE TABLE schedules (
+    CREATE TABLE IF NOT EXISTS schedules (
       id           TEXT PRIMARY KEY,
       payee_id     TEXT NOT NULL REFERENCES payees(id),
       account_id   TEXT REFERENCES accounts(id),
@@ -261,7 +263,7 @@ export async function addSchedules(tx: SqlExecutor): Promise<void> {
       created_at   INTEGER NOT NULL,
       decided_at   INTEGER NOT NULL
     );
-    CREATE INDEX schedules_by_payee ON schedules (payee_id);
+    CREATE INDEX IF NOT EXISTS schedules_by_payee ON schedules (payee_id);
   `);
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }

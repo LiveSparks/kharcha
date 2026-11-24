@@ -67,10 +67,10 @@ export default function Ledger() {
         <Text style={{ fontFamily: fonts.bodyMedium, fontSize: 13, color: p.review }}>Clear all</Text>
       </Pressable> : null}
     </ScrollView>
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', columnGap: 12, paddingVertical: 10 }}>
       <Caption>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</Caption>
-      <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: p.muted }}>
-        <Text style={{ color: p.debit }}>{signedMoney(sum.outPaise, 'debit')}</Text>   <Text style={{ color: p.credit }}>{signedMoney(sum.inPaise, 'credit')}</Text>
+      <Text numberOfLines={1} style={{ fontFamily: fonts.mono, fontSize: 12, color: p.muted }}>
+        <Text style={{ color: p.debit }}>{signedMoney(rounded(sum.outPaise), 'debit')}</Text>  <Text style={{ color: p.credit }}>{signedMoney(rounded(sum.inPaise), 'credit')}</Text>
       </Text>
     </View>
     {items.length ? <FlatList data={items} keyExtractor={item => item.key} renderItem={renderItem} stickyHeaderIndices={sticky}
@@ -92,6 +92,9 @@ export default function Ledger() {
   </Screen>;
 }
 
+// Whole rupees for the summary line, so large totals fit.
+function rounded(paise: number): number { return Math.round(paise / 100) * 100; }
+
 const DayHeader = memo(function DayHeader({ at, outPaise, inPaise, p }: { at: number; outPaise: number; inPaise: number; p: Palette }) {
   return <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: p.sunk }}>
     <Text style={{ fontFamily: fonts.bodyMedium, fontSize: 12, color: p.muted }}>{dateLabel(at)}</Text>
@@ -106,7 +109,7 @@ const LedgerRow = memo(function LedgerRow({ entry, p }: { entry: LedgerEntry; p:
     accessibilityRole="button" accessibilityLabel={`${entry.label}, ${t.direction === 'debit' ? 'spent' : 'received'} ${money(t.amountPaise)}, ${entry.category}${entry.account ? `, ${entry.account}` : ''}${review ? ', needs review' : ''}`}
     style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 9, minHeight: 54,
       backgroundColor: pressed ? p.surface : p.bg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.line })}>
-    <View style={{ width: 4, alignSelf: 'stretch', borderRadius: 2, backgroundColor: review ? p.marigold : 'transparent' }} />
+    {review ? <View style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 4, borderTopRightRadius: 2, borderBottomRightRadius: 2, backgroundColor: p.marigold }} /> : null}
     <View style={{ flex: 1, minWidth: 0 }}>
       <Text numberOfLines={1} style={{ fontFamily: fonts.bodyMedium, fontSize: 14, color: p.ink }}>{entry.label}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
