@@ -70,8 +70,10 @@ export const V1_SCHEMA = `
 export async function upsertAccount(tx: SqlExecutor, account: AccountIdentity, now: number): Promise<string> {
   await tx.runAsync('INSERT INTO accounts (id,bank,last4,kind,created_at) VALUES (?,?,?,?,?) ON CONFLICT(bank,last4) DO NOTHING',
     account.id, account.bank, account.last4, account.kind, now);
-  const row = await tx.getFirstAsync<{ id: string; kind: AccountKind }>('SELECT id,kind FROM accounts WHERE bank=? AND last4=?', account.bank, account.last4);
+  const row = await tx.getFirstAsync<{ id: string; kind: AccountKind }>('SELECT * FROM accounts WHERE bank=? AND last4=?', account.bank, account.last4);
   if (!row) throw new Error('Account upsert failed.');
+  // A type you set yourself (v10) is never changed by what messages suggest.
+  if ((row as { kind_by_user?: number }).kind_by_user) return row.id;
   const kind = mergeAccountKind(row.kind, account.kind);
   if (kind !== row.kind) await tx.runAsync('UPDATE accounts SET kind=? WHERE id=?', kind, row.id);
   return row.id;
@@ -331,7 +333,18 @@ export async function addCategories(tx: SqlExecutor): Promise<void> {
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders, addTransferAccount, addCategories];
+// v9 → v10: which accounts are yours (operator feedback, 2026-11-24). Every account starts
+// undecided (NULL), which still counts, so nothing leaves the ledger until you say so.
+export async function addAccountOwnership(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  await tx.execAsync(`
+    ALTER TABLE accounts ADD COLUMN mine INTEGER;
+    ALTER TABLE accounts ADD COLUMN kind_by_user INTEGER NOT NULL DEFAULT 0;
+  `);
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders, addTransferAccount, addCategories, addAccountOwnership];
 
 export const LATEST_VERSION = migrations.length + 1;
 

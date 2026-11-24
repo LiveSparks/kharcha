@@ -18,14 +18,19 @@ const kindLabels: Record<AccountKind, string> = {
 // its own). A row opens the account's history.
 export default function Accounts() {
   const p = usePalette();
-  const { accounts, accountsById, transactions, balances, linkDebitCard } = useLedger();
+  const { accounts, accountsById, transactions, allTransactions, balances, linkDebitCard } = useLedger();
   const suggestions = useMemo(() => debitCardSuggestions(accounts, transactions), [accounts, transactions]);
   const counts = useMemo(() => {
     const n = new Map<string, number>();
-    for (const t of transactions) if (t.accountId && isLive(t)) n.set(t.accountId, (n.get(t.accountId) ?? 0) + 1);
+    for (const t of allTransactions) if (t.accountId && isLive(t)) n.set(t.accountId, (n.get(t.accountId) ?? 0) + 1);
     return n;
-  }, [transactions]);
-  const banks = [...new Set(accounts.map(a => a.bank))].sort();
+  }, [allTransactions]);
+  // Yours first, then the ones to decide, then the ones you don't track (v10).
+  const groups: [string, string, Account[]][] = [
+    ['Yours', '', accounts.filter(a => a.mine === true)],
+    ['Is this yours?', 'Counted until you decide. Tap Edit to say.', accounts.filter(a => a.mine === null)],
+    ['Not tracked', 'Their messages are left out of your ledger.', accounts.filter(a => a.mine === false)],
+  ];
 
   async function link(card: Account, bank: Account | null) {
     try { await linkDebitCard(card.id, bank?.id ?? null); }
@@ -33,16 +38,17 @@ export default function Accounts() {
   }
 
   return <Screen><ScreenHead title="Accounts" back />
-    <Body muted>Accounts and cards seen in your bank SMS. Names show everywhere they appear.</Body>
+    <Body muted>Accounts and cards seen in your bank SMS. Mark which are yours: only their messages count.</Body>
     {suggestions.map(s => <View key={s.card.id} style={{ marginTop: 18, padding: 15, borderRadius: 12, backgroundColor: p.marigoldSoft, gap: 10 }}>
       <Text style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>••{s.card.last4} looks like a debit card on {accountLabel(s.bank)}</Text>
       <Caption>{s.unmatched} of its {s.cardSpends} spends have no separate message from the bank account.</Caption>
       <View style={{ alignSelf: 'flex-start' }}><Action compact variant="leaf" title="Link" onPress={() => void link(s.card, s.bank)} /></View>
     </View>)}
     {!accounts.length ? <View style={{ marginTop: 22 }}><EmptyState title="No accounts yet" detail="Accounts appear once bank SMS with an account or card number are read." /></View> : null}
-    {banks.map(bank => <View key={bank} style={{ marginTop: 28 }}>
-      <SectionTitle>{bank}</SectionTitle>
-      {accounts.filter(a => a.bank === bank).map(a => {
+    {groups.filter(([, , list]) => list.length).map(([title, note, list]) => <View key={title} style={{ marginTop: 28 }}>
+      <SectionTitle>{title} · {list.length}</SectionTitle>
+      {note ? <Caption style={{ marginTop: 2 }}>{note}</Caption> : null}
+      {list.map(a => {
         const funder = a.fundedBy ? accountsById.get(a.fundedBy) : undefined;
         const n = counts.get(a.id) ?? 0;
         const b = balances.get(a.id);
@@ -54,12 +60,12 @@ export default function Accounts() {
                 <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.bodyMedium, color: p.ink }}>{accountLabel(a)}</Text>
                 {b && b.amountPaise !== null ? <Figure balance={b} /> : null}
               </View>
-              <Caption>{kindLabels[a.kind]} · ••{a.last4} · {n} {n === 1 ? 'transaction' : 'transactions'}{b && b.amountPaise !== null ? ` · ${figureTitle(b).toLowerCase()}` : ''}</Caption>
+              <Caption>{a.name ? `${a.bank} ` : ''}{kindLabels[a.kind]} · ••{a.last4} · {n} {n === 1 ? 'transaction' : 'transactions'}{b && b.amountPaise !== null ? ` · ${figureTitle(b).toLowerCase()}` : ''}</Caption>
               {b && b.amountPaise !== null ? <AsOf balance={b} /> : null}
               {prompt ? <Caption style={{ color: p.review }}>{prompt}</Caption> : null}
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={`${a.name ? 'Rename' : 'Name'} ${accountLabel(a)}`} onPress={() => router.push({ pathname: '/name', params: { kind: 'account', id: a.id } })} hitSlop={8}>
-              <Text style={{ fontFamily: fonts.bodyMedium, color: p.muted, fontSize: 13 }}>{a.name ? 'Rename' : 'Name'}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${accountLabel(a)}`} onPress={() => router.push({ pathname: '/name', params: { kind: 'account', id: a.id } })} hitSlop={8}>
+              <Text style={{ fontFamily: fonts.bodyMedium, color: a.mine === null ? p.review : p.muted, fontSize: 13 }}>Edit</Text>
             </Pressable>
           </View>
           {funder ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

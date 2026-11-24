@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { DEFAULT_PREFERENCES, DEFAULT_SENDERS } from './model';
-import type { Account, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import type { Account, AccountKind, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { V1_SCHEMA, migrate } from './migrations';
 import type { SqlDatabase } from './migrations';
 import {
@@ -8,7 +8,7 @@ import {
   listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, setHabitHiddenSql, movePayeeSql,
   renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, setTransferSql, unmergeSql,
   endScheduleSql, insertScheduleSql, listScheduleRows, updateScheduleTermsSql,
-  addCategorySql, deleteCategorySql, listCategoryRows,
+  addCategorySql, deleteCategorySql, listCategoryRows, setAccountKindSql, setAccountMineSql,
 } from './ledger';
 import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV2 } from './ledger';
 
@@ -57,6 +57,8 @@ export async function dismissUnparsed(id: string): Promise<void> { await dismiss
 
 export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> { await setTransactionStatusSql(await ledger(), id, status); }
 export async function setTransactionCategory(id: string, category: Category): Promise<void> { await setTransactionCategorySql(await ledger(), id, category); }
+export async function setAccountMine(id: string, mine: boolean | null): Promise<void> { await setAccountMineSql(await ledger(), id, mine); }
+export async function setAccountKind(id: string, kind: AccountKind): Promise<void> { await setAccountKindSql(await ledger(), id, kind); }
 export async function listCategories(): Promise<CategoryDef[]> { return listCategoryRows(await ledger()); }
 export async function addCategory(name: string, color?: string): Promise<string> { return addCategorySql(await ledger(), name, color); }
 export async function deleteCategory(name: Category, into: Category): Promise<void> { await deleteCategorySql(await ledger(), name, into); }

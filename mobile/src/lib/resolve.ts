@@ -7,6 +7,15 @@ import type { Account, Category, Payee, Transaction, TransactionStatus } from '.
 const LIVE: ReadonlySet<TransactionStatus> = new Set(['auto', 'review', 'manual']);
 export function isLive(t: Pick<Transaction, 'status'>): boolean { return LIVE.has(t.status); }
 
+// Ownership (v10): a message on an account you marked not yours leaves every view —
+// ledger, review, duplicates, totals. Undecided accounts still count.
+export function untrackedAccountIds(accounts: readonly Pick<Account, 'id' | 'mine'>[]): Set<string> {
+  return new Set(accounts.filter(a => a.mine === false).map(a => a.id));
+}
+export function trackedRows<T extends Pick<Transaction, 'accountId'>>(rows: readonly T[], untracked: ReadonlySet<string>): T[] {
+  return untracked.size ? rows.filter(t => !t.accountId || !untracked.has(t.accountId)) : [...rows];
+}
+
 // Money moved between two of your own accounts: in the ledger, but neither spent nor received.
 export function isOwnTransfer(t: Pick<Transaction, 'accountId' | 'transferAccountId'>): boolean { return !!t.accountId && !!t.transferAccountId; }
 

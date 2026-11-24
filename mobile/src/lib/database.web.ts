@@ -1,6 +1,6 @@
 import { BUILT_IN_COLORS, CATEGORIES, CATEGORY_SWATCHES, DEFAULT_PREFERENCES, DEFAULT_SENDERS, NOT_A_DUPLICATE } from './model';
 import { checkDelete, mergeTargets, validateCategoryName } from './categories';
-import type { Account, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import type { Account, AccountKind, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 import { DUPLICATE_WINDOW_MS, applyPatch, flagDuplicates, keepBothDecision, mergeDecision, pairKey, relinkLegacyFlags, unmergeDecision } from './duplicates';
 import type { DuplicateDecision } from './duplicates';
 import { mergeAccountKind } from './banks';
@@ -93,8 +93,8 @@ function preferenceRows(preferences: Partial<Preferences>): SnapshotV2['preferen
 
 function upsertAccount(s: SnapshotV2, a: AccountIdentity, now: number): string {
   const existing = s.accounts.find(row => row.bank === a.bank && row.last4 === a.last4);
-  if (!existing) { s.accounts.push({ id: a.id, bank: a.bank, last4: a.last4, kind: a.kind, funded_by: null, name: null, created_at: now, opening_balance_paise: null, opening_balance_at: null, credit_limit_paise: null }); return a.id; }
-  existing.kind = mergeAccountKind(existing.kind, a.kind);
+  if (!existing) { s.accounts.push({ id: a.id, bank: a.bank, last4: a.last4, kind: a.kind, funded_by: null, name: null, created_at: now, opening_balance_paise: null, opening_balance_at: null, credit_limit_paise: null, mine: null, kind_by_user: 0 }); return a.id; }
+  if (!existing.kind_by_user) existing.kind = mergeAccountKind(existing.kind, a.kind);
   return existing.id;
 }
 
@@ -373,6 +373,12 @@ export async function setCreditLimit(id: string, paise: number | null): Promise<
 export async function renameAccount(id: string, name: string | null): Promise<void> {
   const clean = name === null ? null : validateName(name);
   update(s => { account(s, id).name = clean; });
+}
+export async function setAccountMine(id: string, mine: boolean | null): Promise<void> {
+  update(s => { account(s, id).mine = mine === null ? null : Number(mine); });
+}
+export async function setAccountKind(id: string, kind: AccountKind): Promise<void> {
+  update(s => { const a = account(s, id); Object.assign(a, { kind, kind_by_user: 1 }, kind === 'debit_card' ? {} : { funded_by: null }); });
 }
 export async function linkDebitCard(cardId: string, bankId: string | null): Promise<void> {
   if (bankId === cardId) throw new Error('A card cannot fund itself.');

@@ -9,7 +9,7 @@ import { validateName } from './resolve.ts';
 import { validateTerms } from './schedules.ts';
 import { checkDelete, validateCategoryName } from './categories.ts';
 import { CATEGORY_SWATCHES } from './model.ts';
-import type { Account, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
+import type { Account, AccountKind, Budget, Category, CategoryDef, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from './model';
 
 // SQL ledger operations shared by the app (expo-sqlite) and the node harness
 // (node:sqlite). Raw parser fields are written once, at insert, and never again.
@@ -299,6 +299,17 @@ export async function setCreditLimitSql(db: SqlExecutor, id: string, paise: numb
 
 export async function renameAccountSql(db: SqlExecutor, id: string, name: string | null): Promise<void> {
   await db.runAsync('UPDATE accounts SET name=? WHERE id=?', name === null ? null : validateName(name), id);
+}
+
+// Ownership (v10): true yours, false not tracked, null undecided.
+export async function setAccountMineSql(db: SqlExecutor, id: string, mine: boolean | null): Promise<void> {
+  await db.runAsync('UPDATE accounts SET mine=? WHERE id=?', mine === null ? null : Number(mine), id);
+}
+
+// A type you choose sticks (kind_by_user). Only a debit card draws from another account.
+export async function setAccountKindSql(db: SqlExecutor, id: string, kind: AccountKind): Promise<void> {
+  if (kind === 'debit_card') await db.runAsync('UPDATE accounts SET kind=?, kind_by_user=1 WHERE id=?', kind, id);
+  else await db.runAsync('UPDATE accounts SET kind=?, kind_by_user=1, funded_by=NULL WHERE id=?', kind, id);
 }
 
 // User-confirmed debit-card link. Linking confirms the card is a debit card.

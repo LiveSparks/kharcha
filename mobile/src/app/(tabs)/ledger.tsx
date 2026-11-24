@@ -82,7 +82,7 @@ export default function Ledger() {
       options={PERIODS.map(x => ({ key: x.value, label: x.label, on: filter.period === x.value, pick: () => set({ period: x.value as Period }) }))} />
     <PickerSheet open={sheet === 'account'} title="Account" onClose={() => setSheet(null)}
       options={[{ key: 'any', label: 'All accounts', on: !filter.accountId, pick: () => set({ accountId: null }) },
-        ...accounts.map(a => ({ key: a.id, label: accountLabel(a), on: filter.accountId === a.id, pick: () => set({ accountId: a.id }) }))]} />
+        ...accounts.filter(a => a.mine !== false).map(a => ({ key: a.id, label: accountLabel(a), on: filter.accountId === a.id, pick: () => set({ accountId: a.id }) }))]} />
     <PickerSheet open={sheet === 'category'} title="Category" onClose={() => setSheet(null)}
       options={[{ key: 'any', label: 'All categories', on: !filter.category, pick: () => set({ category: null }) },
         ...categories.map(({ name: c }) => ({ key: c, label: c, dot: c, on: filter.category === c, pick: () => set({ category: c }) }))]} />

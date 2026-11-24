@@ -45,6 +45,8 @@ export interface AccountRow {
   name: string | null; created_at: number;
   // v4 (absent on rows written before it)
   opening_balance_paise?: number | null; opening_balance_at?: number | null; credit_limit_paise?: number | null;
+  // v10
+  mine?: number | null; kind_by_user?: number;
 }
 
 export interface PayeeRow {
@@ -111,6 +113,7 @@ export function accountFromRow(row: AccountRow): Account {
   return {
     id: row.id, bank: row.bank, last4: row.last4, kind: row.kind, fundedBy: row.funded_by, name: row.name, createdAt: row.created_at,
     openingBalancePaise: row.opening_balance_paise ?? null, openingBalanceAt: row.opening_balance_at ?? null, creditLimitPaise: row.credit_limit_paise ?? null,
+    mine: row.mine === null || row.mine === undefined ? null : !!row.mine, kindByUser: !!row.kind_by_user,
   };
 }
 

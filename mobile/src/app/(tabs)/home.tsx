@@ -12,6 +12,7 @@ import { showMessage } from '@/ui/dialog';
 import { HomeSlot } from '@/ui/HomeSlot';
 import { UpcomingStrip } from '@/ui/Schedules';
 import { ScanProgressBar } from '@/ui/ScanProgress';
+import { AccountCards } from '@/ui/AccountCards';
 
 export default function Home() {
   const p = usePalette();
@@ -34,6 +35,7 @@ export default function Home() {
       <Body muted>Net across accounts</Body>
       <Text style={{ fontFamily: fonts.mono, fontSize: 16, color: net < 0 ? p.debit : p.ink }}>{figureText(net)} ›</Text>
     </Pressable> : null}
+    <AccountCards now={now} />
     <ScanProgressBar />
     <HomeSlot />
     <UpcomingStrip now={now} />

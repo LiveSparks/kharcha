@@ -101,6 +101,11 @@ export interface Account {
   openingBalancePaise: number | null;
   openingBalanceAt: number | null;
   creditLimitPaise: number | null;
+  // Ownership (schema v10): true, yours, and only your accounts' messages count; false,
+  // not tracked (its messages leave the ledger); null, not decided yet (still counted).
+  mine: boolean | null;
+  // The type was set by you, so what messages suggest never changes it.
+  kindByUser: boolean;
 }
 
 export type PayeeKind = 'merchant' | 'masked';

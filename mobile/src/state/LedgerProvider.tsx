@@ -7,12 +7,12 @@ import {
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
   setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, setTransfer, unmerge,
   addSchedule, endSchedule, listSchedules, updateScheduleTerms, setHabitHidden,
-  addCategory, deleteCategory, listCategories,
+  addCategory, deleteCategory, listCategories, setAccountKind, setAccountMine,
 } from '@/lib/database';
 import type { MoveTarget, ScheduleTerms, Snapshot } from '@/lib/database';
 import { BUILT_IN_COLORS, CATEGORIES, DEFAULT_PREFERENCES, NO_FIGURES, NOT_A_DUPLICATE } from '@/lib/model';
 import { liveCategories } from '@/lib/categories';
-import type { Account, Budget, Category, CategoryDef, Direction, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
+import type { Account, AccountKind, Budget, Category, CategoryDef, Direction, Payee, Preferences, Schedule, SenderRule, Transaction, TransactionStatus, UnparsedMessage } from '@/lib/model';
 import { computeBalances, netWorth } from '@/lib/balances';
 import type { AccountBalance } from '@/lib/balances';
 import { detectSeries, matchSchedules, suggestionsFrom } from '@/lib/schedules';
@@ -21,7 +21,7 @@ import { detectHabits } from '@/lib/habits';
 import type { Habit } from '@/lib/habits';
 import { duplicatePairs } from '@/lib/duplicates';
 import type { DuplicatePair } from '@/lib/duplicates';
-import { byId, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
+import { byId, trackedRows, untrackedAccountIds, effectiveCategory, effectivePayeeId, payeeStats, transactionLabel } from '@/lib/resolve';
 import type { PayeeStats } from '@/lib/resolve';
 import { readBankSms, requestSmsPermission } from '@/lib/sms';
 import type { ScanProgress } from '@/lib/sms';
@@ -30,7 +30,9 @@ interface LedgerContextValue {
   ready: boolean;
   busy: boolean;
   error: string | null;
+  // Rows on accounts you track (not-yours accounts left out); allTransactions has every row.
   transactions: Transaction[];
+  allTransactions: Transaction[];
   accounts: Account[];
   payees: Payee[];
   // Read-time resolution (spec §3.3), memoized on the ledger revision.
@@ -84,6 +86,8 @@ interface LedgerContextValue {
   renamePayee: (id: string, name: string | null, category?: Category | null) => Promise<void>;
   markPayeeNudged: (id: string) => Promise<void>;
   renameAccount: (id: string, name: string | null) => Promise<void>;
+  setAccountMine: (id: string, mine: boolean | null) => Promise<void>;
+  setAccountKind: (id: string, kind: AccountKind) => Promise<void>;
   linkDebitCard: (cardId: string, bankId: string | null) => Promise<void>;
   setOpeningBalance: (id: string, paise: number | null, at?: number) => Promise<void>;
   setCreditLimit: (id: string, paise: number | null) => Promise<void>;
@@ -129,7 +133,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [allTransactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
   const [unparsed, setUnparsed] = useState<UnparsedMessage[]>([]);
@@ -263,9 +267,17 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       endSchedule: after(endSchedule),
       setHabitHidden: after(setHabitHidden),
       addCategory: after(addCategory),
+      setAccountMine: after(setAccountMine),
+      setAccountKind: after(setAccountKind),
       deleteCategory: after(deleteCategory),
     };
   }, [refresh]);
+
+  const tracking = useMemo(() => {
+    const untracked = untrackedAccountIds(accounts);
+    return { transactions: trackedRows(allTransactions, untracked), trackedAccounts: accounts.filter(a => !untracked.has(a.id)) };
+  }, [allTransactions, accounts]);
+  const { transactions, trackedAccounts } = tracking;
 
   const resolved = useMemo(() => {
     const payeesById = byId(payees);
@@ -277,9 +289,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       payeeOf: (t: Transaction) => { const id = effectivePayeeId(t); return (id && payeesById.get(id)) || null; },
       accountOf: (t: Transaction) => (t.accountId && accountsById.get(t.accountId)) || null,
       pairs: duplicatePairs(transactions),
-      ...(() => { const balances = computeBalances(transactions, accounts, loadedAt); return { balances, net: netWorth(balances.values()) }; })(),
+      ...(() => { const balances = computeBalances(transactions, trackedAccounts, loadedAt); return { balances, net: netWorth(balances.values()) }; })(),
     };
-  }, [transactions, payees, accounts, loadedAt]);
+  }, [transactions, payees, accounts, trackedAccounts, loadedAt]);
 
   // Detection and matching re-run on every ledger revision: scans, naming, moves,
   // merges and unmerges all go through refresh (spec §5.4 re-run triggers).
@@ -312,7 +324,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<LedgerContextValue>(() => ({
     ...categoryInfo,
-    ready, busy, error, transactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, asOf: revisionAt, budgets, senders, preferences, refresh, scan, enableSms,
+    ready, busy, error, transactions, allTransactions, accounts, payees, unparsed, ...resolved, schedules, ...scheduling, asOf: revisionAt, budgets, senders, preferences, refresh, scan, enableSms,
     addManual, addFromUnparsed, ...mutations, setBudget: changeBudget,
     removeBudget: async category => { await removeBudget(category); await refresh(); },
     setSender: async sender => { await saveSender(sender); await refresh(); },
@@ -320,7 +332,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setPreference: changePreference,
     restore: async snapshot => { await restoreSnapshot(snapshot); await refresh(); },
     clearError: () => setError(null),
-  }), [ready, busy, error, transactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference, categoryInfo]);
+  }), [ready, busy, error, transactions, allTransactions, accounts, payees, unparsed, resolved, schedules, scheduling, revisionAt, budgets, senders, preferences, refresh, scan, enableSms, addManual, addFromUnparsed, mutations, changeBudget, changePreference, categoryInfo]);
 
   return <LedgerContext.Provider value={value}><ScanProgressContext.Provider value={scanStatus}>{children}</ScanProgressContext.Provider></LedgerContext.Provider>;
 }
