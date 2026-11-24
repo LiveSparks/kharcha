@@ -31,20 +31,30 @@ export function AccountCards({ now }: { now: number }) {
         const b = balances.get(c.account.id);
         return <Pressable key={c.account.id} accessibilityRole="button" accessibilityLabel={`Open ${accountLabel(c.account)}`}
           onPress={() => router.push({ pathname: '/account/[id]', params: { id: c.account.id } })}
-          style={({ pressed }) => ({ width: 210, padding: 14, borderRadius: 16, backgroundColor: pressed ? p.sunk : p.surface, borderWidth: 1, borderColor: c.account.mine === null ? p.marigold : p.line, gap: 6 })}>
+          style={({ pressed }) => ({ width: 220, padding: 14, borderRadius: 16, backgroundColor: pressed ? p.sunk : p.surface, borderWidth: 1, borderColor: c.account.mine === null ? p.marigold : p.line, gap: 6 })}>
           <Text numberOfLines={1} style={{ fontFamily: fonts.bodyMedium, fontSize: 15, color: p.ink }}>{accountLabel(c.account)}</Text>
           <Caption numberOfLines={1}>{c.account.name ? `${c.account.bank} ••${c.account.last4}` : c.account.mine === null ? 'Is this yours?' : ' '}</Caption>
           <View style={{ minHeight: 24, justifyContent: 'center' }}>
             {b && b.amountPaise !== null ? <Figure balance={b} size={18} /> : <Caption>No balance yet</Caption>}
           </View>
           {b && b.amountPaise !== null ? <Caption numberOfLines={1}>{figureTitle(b)}</Caption> : null}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 2 }}>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: p.debit }}>{signedMoney(c.outPaise, 'debit')}</Text>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: p.credit }}>{signedMoney(c.inPaise, 'credit')}</Text>
+          <View style={{ marginTop: 2, gap: 1 }}>
+            <Row label="Out" text={signedMoney(whole(c.outPaise), 'debit')} color={p.debit} />
+            <Row label="In" text={signedMoney(whole(c.inPaise), 'credit')} color={p.credit} />
           </View>
           <Caption>this month · {c.count} {c.count === 1 ? 'entry' : 'entries'}</Caption>
         </Pressable>;
       })}
     </ScrollView>
+  </View>;
+}
+
+// Whole rupees keep crore-sized months inside the card.
+function whole(paise: number): number { return Math.round(paise / 100) * 100; }
+
+function Row({ label, text, color }: { label: string; text: string; color: string }) {
+  return <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+    <Caption>{label}</Caption>
+    <Text numberOfLines={1} adjustsFontSizeToFit style={{ flexShrink: 1, fontFamily: fonts.mono, fontSize: 12, color }}>{text}</Text>
   </View>;
 }

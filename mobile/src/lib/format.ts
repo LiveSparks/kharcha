@@ -6,7 +6,9 @@ const timed = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-dig
 
 export function money(paise: number, showDecimals = false): string {
   const rupees = paise / 100;
-  return `₹${showDecimals ? rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : inr.format(rupees)}`;
+  // Paise always show as two digits (₹78,541.70, not ₹78,541.7); whole rupees show none.
+  const two = showDecimals || paise % 100 !== 0;
+  return `₹${two ? rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : inr.format(rupees)}`;
 }
 
 export function signedMoney(paise: number, direction: Direction, showDecimals = false): string {
