@@ -41,7 +41,7 @@ export default function Home() {
     {review ? <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/inbox')} style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: p.marigoldSoft, borderRadius: 12, padding: 15, marginTop: 19 }}>
       <Text style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{review} {review === 1 ? 'entry needs' : 'entries need'} your eye</Text><Text style={{ color: p.review }}>Review ›</Text>
     </Pressable> : null}
-    <View style={{ marginTop: 32, marginBottom: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><SectionTitle>Latest</SectionTitle><Caption>{current.length} this month</Caption></View>
+    <View style={{ marginTop: 32, marginBottom: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><SectionTitle>Latest</SectionTitle><Pressable accessibilityRole="button" accessibilityLabel="Open the ledger" onPress={() => router.push('/(tabs)/ledger')} hitSlop={8}><Caption>{current.length} this month · <Text style={{ color: p.review }}>Ledger ›</Text></Caption></Pressable></View>
     {current.length ? current.slice(0, 8).map(t => <TransactionRow key={t.id} transaction={t} />) : <EmptyState title="A clean page, for now" detail="Add your first expense or let Kharcha read bank messages on this phone." action={<Action compact title="Add an expense" icon="plus" onPress={() => router.push('/manual')} />} />}
     <View style={{ marginTop: 23, gap: 10 }}>
       {preferences.readSms ? <Action title={busy ? 'Reading messages…' : 'Read new bank SMS'} icon="refresh" variant="secondary" disabled={busy} onPress={() => void readNow()} /> : null}

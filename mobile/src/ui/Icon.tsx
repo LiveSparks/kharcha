@@ -1,7 +1,7 @@
 import React from 'react';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 
-export type IconName = 'home' | 'inbox' | 'insights' | 'budgets' | 'you' | 'sms' | 'search' | 'plus' | 'edit' | 'refresh' | 'back' | 'check' | 'close' | 'lock' | 'cloud' | 'chevron' | 'filter' | 'share';
+export type IconName = 'home' | 'inbox' | 'ledger' | 'insights' | 'budgets' | 'you' | 'sms' | 'search' | 'plus' | 'edit' | 'refresh' | 'back' | 'check' | 'close' | 'lock' | 'cloud' | 'chevron' | 'filter' | 'share';
 
 type IconArtProps = {
   color: string;
@@ -15,6 +15,7 @@ function strokeStyle(color: string) {
 const artwork: Record<IconName, (props: IconArtProps) => React.ReactNode> = {
   home: ({ color }) => <Path fill={color} d="M4 3h16v15l-2 2-2-2-2 2-2-2-2 2-2-2-2 2-2-2V3Zm3 4v2h10V7H7Zm0 5v2h6v-2H7Z" />,
   inbox: ({ color }) => <><Path fill={color} opacity=".45" d="M5 2h14v4H5z" /><Path fill={color} d="M3 6h18v13l-2 2-2-2-2 2-3-2-3 2-2-2-2 2-2-2V6Zm4 4v2h10v-2H7Zm0 4v2h7v-2H7Z" /></>,
+  ledger: ({ color }) => <Path fill={color} fillRule="evenodd" d="M4 3h16v18H4V3Zm3 4v2h3V7H7Zm5 0v2h5V7h-5Zm-5 4v2h3v-2H7Zm5 0v2h5v-2h-5Zm-5 4v2h3v-2H7Zm5 0v2h5v-2h-5Z" />,
   insights: ({ color }) => <Path fill={color} d="M3 17h5v4H3v-4Zm7-7h5v11h-5V10Zm7-7h4v18h-4V3Zm-7 4h5v1h-5V7Zm7 8h4v2h-4v-2Z" />,
   budgets: ({ color }) => <><Path fill={color} d="M12 2a10 10 0 1 0 10 10H12V2Z" /><Path fill={color} opacity=".45" d="M14 2.2V10h7.8A10 10 0 0 0 14 2.2Z" /></>,
   you: ({ color }) => <><Path fill={color} d="M5 3h4v9l5-6h5l-6 7 6 8h-5l-5-7v7H5V3Z" /><Circle fill={color} cx="20" cy="20" r="2" /></>,

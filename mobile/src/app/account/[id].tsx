@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Action, Body, Caption, EmptyState, Label, Screen, ScreenHead, SectionTitle, TransactionRow } from '@/ui/Kit';
 import { Field } from '@/ui/Forms';
@@ -71,7 +71,8 @@ export default function AccountScreen() {
     finally { setSaving(false); }
   }
 
-  return <Screen><ScreenHead title={accountLabel(account)} back />
+  const header = <>
+    <ScreenHead title={accountLabel(account)} back />
     <View style={{ backgroundColor: p.surface, borderRadius: 16, padding: 16, gap: 6 }}>
       {balance.amountPaise !== null ? <>
         <Caption>{figureTitle(balance)}</Caption>
@@ -104,13 +105,17 @@ export default function AccountScreen() {
     </View> : null}
 
     <View style={{ marginTop: 28, marginBottom: 8 }}><SectionTitle>History</SectionTitle></View>
-    {items.length ? items.map(item => item.type === 'gap'
-      ? <GapItem key={item.gap.id} gap={item.gap} />
-      : <View key={item.transaction.id}>
+  </>;
+  const said = (t: (typeof items)[number]) => t.type === 'gap' ? null
+    : t.transaction.reportedBalancePaise !== null && account.kind !== 'credit_card' ? `Bank said balance ${figureText(t.transaction.reportedBalancePaise)}`
+      : t.transaction.reportedAvlLimitPaise !== null && account.kind === 'credit_card' ? `Bank said available ${figureText(t.transaction.reportedAvlLimitPaise)}` : null;
+  return <Screen scroll={false}>
+    <FlatList data={items} keyExtractor={item => item.type === 'gap' ? item.gap.id : item.transaction.id} ListHeaderComponent={header}
+      ListEmptyComponent={<EmptyState title="No transactions yet" detail="Transactions on this account appear here." />}
+      renderItem={({ item }) => item.type === 'gap' ? <GapItem gap={item.gap} /> : <View>
         <TransactionRow transaction={item.transaction} />
-        {item.transaction.reportedBalancePaise !== null && account.kind !== 'credit_card' ? <Caption style={{ marginTop: -6, marginBottom: 6, textAlign: 'right' }}>Bank said balance {figureText(item.transaction.reportedBalancePaise)}</Caption> : null}
-        {item.transaction.reportedAvlLimitPaise !== null && account.kind === 'credit_card' ? <Caption style={{ marginTop: -6, marginBottom: 6, textAlign: 'right' }}>Bank said available {figureText(item.transaction.reportedAvlLimitPaise)}</Caption> : null}
-      </View>)
-      : <EmptyState title="No transactions yet" detail="Transactions on this account appear here." />}
+        {said(item) ? <Caption style={{ marginTop: -6, marginBottom: 6, textAlign: 'right' }}>{said(item)}</Caption> : null}
+      </View>}
+      initialNumToRender={15} maxToRenderPerBatch={15} windowSize={9} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }} />
   </Screen>;
 }
