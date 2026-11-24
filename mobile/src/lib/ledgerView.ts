@@ -1,5 +1,5 @@
 import type { Account, Category, Direction, Payee, Transaction } from './model';
-import { accountLabel, effectiveCategory, isLive, transactionLabel } from './resolve.ts';
+import { accountLabel, effectiveCategory, isLive, isOwnTransfer, transactionLabel } from './resolve.ts';
 
 // The Ledger tab (operator feedback, 2026-11-24): every Live row as a dense list, newest
 // first, grouped by day, with search and filters. Pure, so the screen only renders.
@@ -75,7 +75,10 @@ export function ledgerEntries(
     if (filter.category && category !== filter.category) continue;
     const label = transactionLabel(t, payees);
     const a = t.accountId ? accounts.get(t.accountId) : undefined;
-    const account = a ? accountLabel(a) : t.accountLast4 ? `··${t.accountLast4}` : null;
+    const own = a ? accountLabel(a) : t.accountLast4 ? `··${t.accountLast4}` : null;
+    const b = t.transferAccountId ? accounts.get(t.transferAccountId) : undefined;
+    // A transfer between your accounts reads "From → To".
+    const account = own && b ? (t.direction === 'debit' ? `${own} → ${accountLabel(b)}` : `${accountLabel(b)} → ${own}`) : own;
     if (q) {
       const text = `${label}\n${t.merchant}\n${category}\n${account ?? ''}`.toLowerCase();
       const hit = text.includes(q) || (amount !== null && amount(t.amountPaise));
@@ -102,7 +105,8 @@ export function groupByDay(entries: readonly LedgerEntry[]): LedgerItem[] {
       header = { type: 'day', key: `day:${key}`, at: t.occurredAt, outPaise: 0, inPaise: 0 };
       items.push(header);
     }
-    if (t.direction === 'debit') header.outPaise += t.amountPaise; else header.inPaise += t.amountPaise;
+    // Money moved between your own accounts is neither spent nor received.
+    if (!isOwnTransfer(t)) { if (t.direction === 'debit') header.outPaise += t.amountPaise; else header.inPaise += t.amountPaise; }
     items.push({ type: 'row', key: t.id, entry });
   }
   return items;
@@ -110,6 +114,9 @@ export function groupByDay(entries: readonly LedgerEntry[]): LedgerItem[] {
 
 export function totals(entries: readonly LedgerEntry[]): { outPaise: number; inPaise: number } {
   let outPaise = 0, inPaise = 0;
-  for (const { transaction: t } of entries) if (t.direction === 'debit') outPaise += t.amountPaise; else inPaise += t.amountPaise;
+  for (const { transaction: t } of entries) {
+    if (isOwnTransfer(t)) continue;
+    if (t.direction === 'debit') outPaise += t.amountPaise; else inPaise += t.amountPaise;
+  }
   return { outPaise, inPaise };
 }

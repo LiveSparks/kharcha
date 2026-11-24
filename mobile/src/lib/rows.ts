@@ -36,6 +36,8 @@ export interface TransactionRow {
   // v4
   reported_balance_paise: number | null;
   reported_avl_limit_paise: number | null;
+  // v8
+  transfer_account_id?: string | null;
 }
 
 export interface AccountRow {
@@ -83,6 +85,7 @@ export function transactionFromRow(row: TransactionRow): Transaction {
     duplicateOf: row.duplicate_of ?? null, preFlagStatus: row.pre_flag_status ?? null,
     duplicateCleared: !!row.duplicate_cleared,
     reportedBalancePaise: row.reported_balance_paise ?? null, reportedAvlLimitPaise: row.reported_avl_limit_paise ?? null,
+    transferAccountId: row.transfer_account_id ?? null,
   };
 }
 
@@ -99,6 +102,7 @@ export function transactionToRow(t: Transaction): TransactionRow {
     duplicate_of: t.duplicateOf ?? null, pre_flag_status: t.preFlagStatus ?? null,
     duplicate_cleared: t.duplicateCleared ? 1 : 0,
     reported_balance_paise: t.reportedBalancePaise ?? null, reported_avl_limit_paise: t.reportedAvlLimitPaise ?? null,
+    transfer_account_id: t.transferAccountId ?? null,
   };
 }
 

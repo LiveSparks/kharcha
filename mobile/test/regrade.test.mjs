@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { openDatabase } from './support/node-sqlite.mjs';
 import { seedV1 } from './support/fixtures.mjs';
-import { LATEST_VERSION, migrate, readVersion } from '../src/lib/migrations.ts';
+import { migrate, migrations, readVersion, regradeAndSenders } from '../src/lib/migrations.ts';
+
+const V7 = migrations.indexOf(regradeAndSenders) + 2;
 import { listTransactionRows } from '../src/lib/ledger.ts';
 import { isMandateEcho, parseBankSms } from '../src/lib/parser.ts';
 import { isUnreadTransaction } from '../src/lib/unparsed.ts';
@@ -74,15 +76,15 @@ test('with auto-add off, review rows stay in review', () => {
 test('v6 → v7 renames route-bound sender rules, adds HDFC UPI and asks for a whole-inbox read', async () => {
   const db = openDatabase();
   await seedV1(db);
-  await migrate(db, LATEST_VERSION - 1);
+  await migrate(db, V7 - 1);
   await db.execAsync(`
     DELETE FROM senders;
     INSERT INTO senders VALUES ('HDFCBK','HDFC Bank',1),('VM-SBIUPI','SBI · UPI',1),('AX-ICICIT','ICICI Bank',0),('PNBSMS','PNB',1);
     INSERT OR REPLACE INTO preferences VALUES ('lastScanAt','1767225600000');
   `);
   await db.runAsync("UPDATE transactions SET status='review', confidence=0.84, raw_body=? WHERE id=(SELECT id FROM transactions WHERE raw_body IS NOT NULL LIMIT 1)", NO_REF);
-  assert.equal(await migrate(db), LATEST_VERSION);
-  assert.equal(await readVersion(db), LATEST_VERSION);
+  assert.equal(await migrate(db, V7), V7);
+  assert.equal(await readVersion(db), 7);
   const senders = await db.getAllAsync('SELECT address, label, enabled FROM senders ORDER BY address');
   assert.deepEqual(senders.map(s => [s.address, s.enabled]), [['HDFCBK', 1], ['HDFCBN', 1], ['ICICIT', 0], ['PNBSMS', 1], ['SBIUPI', 1]]);
   assert.equal((await db.getFirstAsync("SELECT value FROM preferences WHERE key='lastScanAt'")).value, '0');

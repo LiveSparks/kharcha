@@ -5,7 +5,7 @@ import {
   addTransaction, dismissUnparsed, exportSnapshot, getDatabase, ingestScan, keepBoth, linkDebitCard, linkUnparsed, listAccounts,
   listBudgets, listPayees, listSenders, listTransactions, listUnparsed, loadPreferences, markPayeeNudged, mergeDuplicate, movePayee,
   removeBudget, removeSender, renameAccount, renamePayee, restoreSnapshot, saveBudget, savePreference, saveSender,
-  setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, unmerge,
+  setCreditLimit, setOpeningBalance, setTransactionCategory, setTransactionStatus, setTransfer, unmerge,
   addSchedule, endSchedule, listSchedules, updateScheduleTerms, setHabitHidden,
 } from '@/lib/database';
 import type { MoveTarget, ScheduleTerms, Snapshot } from '@/lib/database';
@@ -72,6 +72,7 @@ interface LedgerContextValue {
   dismissUnparsed: (id: string) => Promise<void>;
   setTransactionStatus: (id: string, status: TransactionStatus) => Promise<void>;
   setTransactionCategory: (id: string, category: Category) => Promise<void>;
+  setTransfer: (id: string, from: string | null, to: string | null) => Promise<void>;
   movePayee: (id: string, target: MoveTarget) => Promise<string>;
   renamePayee: (id: string, name: string | null, category?: Category | null) => Promise<void>;
   markPayeeNudged: (id: string) => Promise<void>;
@@ -213,7 +214,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       occurredAt, merchant: merchant.trim(), amountPaise, direction, category,
       status: 'manual', accountLast4: null, counterpartyMasked: null, counterpartyLast4: null,
       reference: null, confidence: 1, createdAt: now, updatedAt: now,
-      accountId, payeeId: null, payeeOverrideId: null, categoryByUser: true, ...NOT_A_DUPLICATE, ...NO_FIGURES });
+      accountId, payeeId: null, payeeOverrideId: null, categoryByUser: true, ...NOT_A_DUPLICATE, ...NO_FIGURES, transferAccountId: null });
     await refresh();
     return id;
   }, [refresh]);
@@ -235,6 +236,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     return {
       setTransactionStatus: after(setTransactionStatus),
       setTransactionCategory: after(setTransactionCategory),
+      setTransfer: after(setTransfer),
       movePayee: after(movePayee),
       renamePayee: after(renamePayee),
       markPayeeNudged: after(markPayeeNudged),

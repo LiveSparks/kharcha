@@ -43,6 +43,9 @@ export interface Transaction {
   // Balances (schema v4): what the bank says after this transaction (WF-4 anchors).
   reportedBalancePaise: number | null;
   reportedAvlLimitPaise: number | null;
+  // Transfers (schema v8): the other of your own accounts this money moved to or from.
+  // A debit moves accountId → transferAccountId; a credit moves transferAccountId → accountId.
+  transferAccountId: string | null;
 }
 
 // Defaults for a row that was never flagged.

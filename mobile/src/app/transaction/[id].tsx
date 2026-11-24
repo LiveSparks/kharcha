@@ -13,6 +13,7 @@ import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
 import { showMessage } from '@/ui/dialog';
 import { ScheduleBadge } from '@/ui/Schedules';
+import { PickerSheet } from '@/ui/Sheet';
 import { HabitChip } from '@/ui/Habits';
 import { scheduleFor } from '@/lib/schedules';
 
@@ -130,6 +131,44 @@ function TransactionFacts({ transaction: t }: { transaction: Transaction }) {
   </View>;
 }
 
+// Transfers: pick which of your accounts the money left and which it reached. Each pick
+// saves at once. "Not my account" leaves that side to the payee.
+function TransferPanel({ transaction: t }: { transaction: Transaction }) {
+  const p = usePalette();
+  const { accounts, accountsById, setTransfer } = useLedger();
+  const [sheet, setSheet] = useState<'from' | 'to' | null>(null);
+  const from = t.direction === 'debit' ? t.accountId : t.transferAccountId;
+  const to = t.direction === 'debit' ? t.transferAccountId : t.accountId;
+  const name = (id: string | null) => { const a = id ? accountsById.get(id) : undefined; return a ? accountLabel(a) : 'Not my account'; };
+  async function pick(side: 'from' | 'to', id: string | null) {
+    setSheet(null);
+    try { await setTransfer(t.id, side === 'from' ? id : from, side === 'to' ? id : to); }
+    catch (e) { showMessage('Could not save', e instanceof Error ? e.message : 'Try again.'); }
+  }
+  const options = (side: 'from' | 'to') => {
+    const current = side === 'from' ? from : to;
+    const other = side === 'from' ? to : from;
+    return [{ key: 'none', label: 'Not my account', on: !current, pick: () => void pick(side, null) },
+      ...accounts.filter(a => a.id !== other).map(a => ({ key: a.id, label: accountLabel(a), on: current === a.id, pick: () => void pick(side, a.id) }))];
+  };
+  const line = (side: 'from' | 'to', id: string | null) => <Pressable accessibilityRole="button" accessibilityLabel={`${side === 'from' ? 'From' : 'To'}: ${name(id)}. Change`} onPress={() => setSheet(side)}
+    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+    <Caption>{side === 'from' ? 'From' : 'To'}</Caption>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>
+      <Body><Text numberOfLines={1}>{name(id)}</Text></Body>
+      <Icon name="chevron" color={p.muted} size={15} />
+    </View>
+  </Pressable>;
+  return <View style={{ backgroundColor: p.surface, borderRadius: 12, padding: 15, gap: 8, marginBottom: 22 }}>
+    <Label>Transfer</Label>
+    {line('from', from)}
+    {line('to', to)}
+    <Caption>{from && to ? 'Between your own accounts, so it is left out of spent and received.' : 'Pick both of your accounts if this money stayed with you.'}</Caption>
+    <PickerSheet open={sheet === 'from'} title="From" options={options('from')} onClose={() => setSheet(null)} />
+    <PickerSheet open={sheet === 'to'} title="To" options={options('to')} onClose={() => setSheet(null)} />
+  </View>;
+}
+
 function TransactionActions({ transaction, busy, onSave }: { transaction: Transaction; busy: boolean; onSave: (status: TransactionStatus) => void }) {
   // Pending and merged copies change state only through the duplicate panel.
   if (transaction.status === 'duplicate_review' || transaction.status === 'merged') {
@@ -168,6 +207,7 @@ export default function TransactionDetail() {
     <DuplicatePanel transaction={t} />
     <PayeeRow transaction={t} />
     <View style={{ marginBottom: 28 }}><CategoryPicker value={category} onChange={setPicked} /></View>
+    {category === 'Transfers' ? <TransferPanel transaction={t} /> : null}
     <TransactionFacts transaction={t} />
     {t.rawBody ? <View style={{ marginBottom: 24 }}><SmsSlip transaction={t} /></View> : null}
     <TransactionActions transaction={t} busy={busy} onSave={status => void save(status)} />

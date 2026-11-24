@@ -300,7 +300,14 @@ export async function regradeAndSenders(tx: SqlExecutor): Promise<void> {
   await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
 }
 
-export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders];
+// v7 → v8: a transfer's other account (operator feedback, 2026-11-24).
+export async function addTransferAccount(tx: SqlExecutor): Promise<void> {
+  const version = await readVersion(tx);
+  await tx.execAsync('ALTER TABLE transactions ADD COLUMN transfer_account_id TEXT REFERENCES accounts(id)');
+  await tx.execAsync(`PRAGMA user_version = ${version + 1}`);
+}
+
+export const migrations: ((tx: SqlExecutor) => Promise<void>)[] = [v1ToV2, v2ToV3, v3ToV4, addSchedules, addHabitHidden, regradeAndSenders, addTransferAccount];
 
 export const LATEST_VERSION = migrations.length + 1;
 

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Action, Body, Caption, Screen, ScreenHead, SectionTitle } from '@/ui/Kit';
+import { Body, Caption, Screen, ScreenHead } from '@/ui/Kit';
 import { Field, Note } from '@/ui/Forms';
 import { Icon } from '@/ui/Icon';
 import { effectivePayeeId, payeeLabel, payeeList } from '@/lib/resolve';
@@ -17,7 +17,6 @@ export default function MovePayee() {
   const { transactions, payees, stats, movePayee } = useLedger();
   const t = transactions.find(item => item.id === id);
   const [query, setQuery] = useState('');
-  const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const current = t ? effectivePayeeId(t) : null;
   const original = t?.payeeOverrideId ? t.payeeId : null;
@@ -41,19 +40,24 @@ export default function MovePayee() {
     finally { setBusy(false); }
   }
 
+  // One box: type to find a payee, or keep typing and create one with that name.
+  const typed = query.trim();
+  const exact = options.some(e => e.label.toLowerCase() === typed.toLowerCase());
   return <Screen><ScreenHead title="Move this one" back />
     <Body muted>Only this transaction moves. Other and future messages keep their payee.</Body>
     <View style={{ gap: 12, marginTop: 22 }}>
-      <SectionTitle>A new payee</SectionTitle>
-      <Field label="Name" value={newName} onChangeText={setNewName} placeholder="Who this really was" autoCapitalize="words" />
-      <Action title={busy ? 'Moving…' : 'Move to new payee'} variant="secondary" disabled={busy || !newName.trim()} onPress={() => void move({ newName })} />
-    </View>
-    <View style={{ marginTop: 30, gap: 12 }}>
-      <SectionTitle>An existing payee</SectionTitle>
-      <Field label="Search" value={query} onChangeText={setQuery} placeholder="Name or a/c" autoCapitalize="none" />
+      <Field label="Payee" value={query} onChangeText={setQuery} placeholder="Search, or type a new name" autoCapitalize="words" />
       {t.payeeOverrideId && t.payeeId ? <Note>Pick the original payee to undo the move.</Note> : null}
     </View>
     <View style={{ marginTop: 6 }}>
+      {typed && !exact ? <Pressable accessibilityRole="button" accessibilityLabel={`Create payee ${typed}`} disabled={busy} onPress={() => void move({ newName: typed })}
+        style={{ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Icon name="plus" color={p.leaf} size={18} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ fontFamily: fonts.bodyMedium, color: p.ink }}>{busy ? 'Moving…' : `Create “${typed}”`}</Text>
+          <Caption>A new payee for this transaction</Caption>
+        </View>
+      </Pressable> : null}
       {options.map(e => <Pressable key={e.payee.id} accessibilityRole="button" disabled={busy || e.payee.id === current} onPress={() => void move(e.payee.id)}
         style={{ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -62,6 +66,7 @@ export default function MovePayee() {
         </View>
         {e.payee.id === current ? <Icon name="check" color={p.leaf} size={18} /> : null}
       </Pressable>)}
+      {typed && !options.length ? <Caption style={{ marginTop: 10 }}>No payee matches “{typed}”.</Caption> : null}
     </View>
   </Screen>;
 }

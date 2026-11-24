@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Caption, CategoryDot, EmptyState, Screen, ScreenHead } from '@/ui/Kit';
 import { Icon } from '@/ui/Icon';
+import { PickerSheet } from '@/ui/Sheet';
 import { fonts, usePalette } from '@/ui/theme';
 import type { Palette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
@@ -117,26 +118,3 @@ const LedgerRow = memo(function LedgerRow({ entry, p }: { entry: LedgerEntry; p:
     <Text style={{ fontFamily: fonts.mono, fontSize: 14, color: t.direction === 'debit' ? p.debit : p.credit }}>{signedMoney(t.amountPaise, t.direction, t.amountPaise % 100 !== 0)}</Text>
   </Pressable>;
 });
-
-function PickerSheet({ open, title, options, onClose }: {
-  open: boolean; title: string; onClose: () => void;
-  options: { key: string; label: string; on: boolean; dot?: Category; pick: () => void }[];
-}) {
-  const p = usePalette();
-  if (!open) return null;
-  return <Modal transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-    <Pressable accessibilityLabel="Close" onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,.5)', justifyContent: 'flex-end' }}>
-      <Pressable accessibilityViewIsModal style={{ backgroundColor: p.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 18, paddingBottom: 28, maxHeight: '70%' }}>
-        <Text accessibilityRole="header" style={{ fontFamily: fonts.displayMedium, fontSize: 19, color: p.ink, paddingHorizontal: 20, marginBottom: 8 }}>{title}</Text>
-        <ScrollView>
-          {options.map(o => <Pressable key={o.key} accessibilityRole="radio" accessibilityState={{ checked: o.on }} onPress={o.pick}
-            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, minHeight: 48, backgroundColor: pressed ? p.sunk : 'transparent' })}>
-            {o.dot ? <CategoryDot category={o.dot} /> : null}
-            <Text numberOfLines={1} style={{ flex: 1, fontFamily: o.on ? fonts.bodyMedium : fonts.body, fontSize: 15, color: p.ink }}>{o.label}</Text>
-            {o.on ? <Icon name="check" color={p.leaf} size={18} /> : null}
-          </Pressable>)}
-        </ScrollView>
-      </Pressable>
-    </Pressable>
-  </Modal>;
-}

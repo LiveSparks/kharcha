@@ -10,6 +10,8 @@ import type { Palette } from './theme';
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
 import { useLedger } from '@/state/LedgerProvider';
+import { accountLabel } from '@/lib/resolve';
+import { reviewReasons } from '@/lib/reviewReason';
 
 export function Body({ children, muted = false, style }: { children: React.ReactNode; muted?: boolean; style?: object }) {
   const p = usePalette();
@@ -135,8 +137,11 @@ function highlightedBody(body: string, p: Palette): React.ReactNode[] {
 
 export function SmsSlip({ transaction, actions }: { transaction: Transaction; actions?: React.ReactNode }) {
   const p = usePalette();
-  const { labelOf, categoryOf } = useLedger();
+  const { labelOf, categoryOf, accountOf, preferences } = useLedger();
   if (!transaction.rawBody) return null;
+  const account = accountOf(transaction);
+  const accountText = account ? accountLabel(account) : transaction.accountLast4 ? `Account ··${transaction.accountLast4}` : 'No account in the message';
+  const reasons = reviewReasons(transaction, preferences.autoAdd);
   return <View style={{ backgroundColor: p.surface, borderRadius: 20, borderWidth: 1, borderColor: transaction.status === 'review' ? p.marigold : p.line, overflow: 'hidden' }}>
     <View style={{ paddingHorizontal: 15, paddingTop: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><Icon name="sms" color={p.muted} size={15} /><Text style={{ fontFamily: fonts.mono, fontSize: 12, color: p.muted }}>{transaction.sender}</Text></View>
@@ -153,10 +158,18 @@ export function SmsSlip({ transaction, actions }: { transaction: Transaction; ac
         <Label style={{ flex: 1 }}><Text numberOfLines={1}>{labelOf(transaction)}</Text></Label>
         <Text style={{ fontFamily: fonts.mono, color: transaction.direction === 'debit' ? p.debit : p.credit, fontSize: 14 }}>{signedMoney(transaction.amountPaise, transaction.direction)}</Text>
       </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Caption>{transaction.direction === 'debit' ? 'From' : 'Into'}</Caption>
+        <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.bodyMedium, fontSize: 13, color: account || transaction.accountLast4 ? p.ink : p.review }}>{accountText}</Text>
+      </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <CategoryChip category={categoryOf(transaction)} />
         <Caption style={{ color: transaction.status === 'review' ? p.review : p.leaf }}>{transaction.status === 'review' ? 'Needs review' : transaction.status === 'ignored' ? 'Ignored' : transaction.status === 'duplicate_review' ? 'Possible duplicate' : transaction.status === 'merged' ? 'Merged copy' : 'In ledger'}</Caption>
       </View>
+      {reasons.length ? <View accessibilityLabel={`Why it needs review: ${reasons.join(' ')}`} style={{ backgroundColor: p.marigoldSoft, borderRadius: 10, padding: 10, gap: 3 }}>
+        <Text style={{ fontFamily: fonts.bodyMedium, fontSize: 12, color: p.review }}>{"Why it's here"}</Text>
+        {reasons.map(r => <Text key={r} style={{ fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: p.ink }}>{r}</Text>)}
+      </View> : null}
       {actions ? <View style={{ marginTop: 7 }}>{actions}</View> : null}
     </View>
   </View>;

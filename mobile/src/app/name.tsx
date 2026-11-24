@@ -21,7 +21,9 @@ export default function NameSheet() {
   const payee = kind === 'payee' ? payeesById.get(id) : undefined;
   const account = kind === 'account' ? accountsById.get(id) : undefined;
   const current = payee ?? account;
-  const [name, setName] = useState(current?.name ?? '');
+  // An unnamed merchant payee starts with the name read from its messages, ready to keep
+  // or edit; an account-number payee ("a/c **7788") has nothing worth suggesting.
+  const [name, setName] = useState(current?.name ?? (payee?.kind === 'merchant' ? payeeDefaultLabel(payee).slice(0, 40).trim() : ''));
   const [category, setCategory] = useState<Category | null>(payee?.category ?? null);
   const [busy, setBusy] = useState(false);
   if (!current) return <Screen><ScreenHead title="Not found" back /><Body muted>This payee or account is no longer in your ledger.</Body></Screen>;

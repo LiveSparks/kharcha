@@ -6,7 +6,7 @@ import type { SqlDatabase } from './migrations';
 import {
   dismissUnparsedSql, exportSnapshotSql, ingestScanSql, insertTransaction, keepBothSql, linkDebitCardSql, linkUnparsedSql,
   listAccountRows, listPayeeRows, listTransactionRows, listUnparsedRows, markPayeeNudgedSql, mergeDuplicateSql, setHabitHiddenSql, movePayeeSql,
-  renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, unmergeSql,
+  renameAccountSql, renamePayeeSql, setCreditLimitSql, setOpeningBalanceSql, restoreSnapshotSql, setTransactionCategorySql, setTransactionStatusSql, setTransferSql, unmergeSql,
   endScheduleSql, insertScheduleSql, listScheduleRows, updateScheduleTermsSql,
 } from './ledger';
 import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV2 } from './ledger';
@@ -56,6 +56,7 @@ export async function dismissUnparsed(id: string): Promise<void> { await dismiss
 
 export async function setTransactionStatus(id: string, status: TransactionStatus): Promise<void> { await setTransactionStatusSql(await ledger(), id, status); }
 export async function setTransactionCategory(id: string, category: Category): Promise<void> { await setTransactionCategorySql(await ledger(), id, category); }
+export async function setTransfer(id: string, from: string | null, to: string | null): Promise<void> { await setTransferSql(await ledger(), id, from, to); }
 export async function movePayee(id: string, target: MoveTarget): Promise<string> { return movePayeeSql(await ledger(), id, target); }
 export async function renamePayee(id: string, name: string | null, category?: Category | null): Promise<void> { await renamePayeeSql(await ledger(), id, name, category); }
 export async function markPayeeNudged(id: string): Promise<void> { await markPayeeNudgedSql(await ledger(), id); }

@@ -7,6 +7,9 @@ import type { Account, Category, Payee, Transaction, TransactionStatus } from '.
 const LIVE: ReadonlySet<TransactionStatus> = new Set(['auto', 'review', 'manual']);
 export function isLive(t: Pick<Transaction, 'status'>): boolean { return LIVE.has(t.status); }
 
+// Money moved between two of your own accounts: in the ledger, but neither spent nor received.
+export function isOwnTransfer(t: Pick<Transaction, 'accountId' | 'transferAccountId'>): boolean { return !!t.accountId && !!t.transferAccountId; }
+
 export function effectivePayeeId(t: Pick<Transaction, 'payeeId' | 'payeeOverrideId'>): string | null {
   return t.payeeOverrideId ?? t.payeeId;
 }

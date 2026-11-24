@@ -169,6 +169,20 @@ export async function setTransactionCategorySql(db: SqlExecutor, id: string, cat
   await db.runAsync('UPDATE transactions SET category=?, category_by_user=1, updated_at=? WHERE id=?', category, Date.now(), id);
 }
 
+// Transfers: which of your accounts the money left and which it reached. The row's own
+// side is its account_id; the other side is transfer_account_id (null: not your account).
+export function transferSides(direction: 'debit' | 'credit', from: string | null, to: string | null): { accountId: string | null; transferAccountId: string | null } {
+  if (from && to && from === to) throw new Error('Pick two different accounts.');
+  return direction === 'debit' ? { accountId: from, transferAccountId: to } : { accountId: to, transferAccountId: from };
+}
+
+export async function setTransferSql(db: SqlExecutor, id: string, from: string | null, to: string | null): Promise<void> {
+  const row = await db.getFirstAsync<{ direction: 'debit' | 'credit' }>('SELECT direction FROM transactions WHERE id=?', id);
+  if (!row) throw new Error('Entry not found.');
+  const sides = transferSides(row.direction, from, to);
+  await db.runAsync('UPDATE transactions SET account_id=?, transfer_account_id=?, updated_at=? WHERE id=?', sides.accountId, sides.transferAccountId, Date.now(), id);
+}
+
 export type MoveTarget = string | { newName: string };
 
 // "Move this one": per-row reassignment (WF-1 collision escape hatch). Moving back to

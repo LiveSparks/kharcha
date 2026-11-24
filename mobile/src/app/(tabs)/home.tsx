@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Action, Body, Caption, EmptyState, Screen, ScreenHead, SectionTitle, SummarySlip, TransactionRow } from '@/ui/Kit';
 import { fonts, usePalette } from '@/ui/theme';
 import { useLedger } from '@/state/LedgerProvider';
-import { isLive } from '@/lib/resolve';
+import { isLive, isOwnTransfer } from '@/lib/resolve';
 import { monthLabel, startOfMonth, money } from '@/lib/format';
 import { figureText } from '@/ui/Balances';
 import { useNow } from '@/lib/useNow';
@@ -19,8 +19,9 @@ export default function Home() {
   const { transactions, budgets, preferences, scan, busy, error, clearError, net } = useLedger();
   const start = startOfMonth(now);
   const current = transactions.filter(t => t.occurredAt >= start && isLive(t));
-  const spent = current.filter(t => t.direction === 'debit').reduce((sum, t) => sum + t.amountPaise, 0);
-  const received = current.filter(t => t.direction === 'credit').reduce((sum, t) => sum + t.amountPaise, 0);
+  const counted = current.filter(t => !isOwnTransfer(t));
+  const spent = counted.filter(t => t.direction === 'debit').reduce((sum, t) => sum + t.amountPaise, 0);
+  const received = counted.filter(t => t.direction === 'credit').reduce((sum, t) => sum + t.amountPaise, 0);
   const budget = budgets.reduce((sum, item) => sum + item.amountPaise, 0);
   const review = transactions.filter(t => t.status === 'review').length;
   async function readNow() {

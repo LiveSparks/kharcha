@@ -8,7 +8,7 @@ import type { AccountIdentity, PayeeIdentity } from './identity';
 import { LATEST_VERSION } from './migrations';
 import { parseBankSms, reportedFigures } from './parser';
 import { HDFC_UPI_SENDER, SENDER_RENAMES, regradePatches } from './regrade';
-import { validateSnapshot, validPaise } from './ledger';
+import { transferSides, validateSnapshot, validPaise } from './ledger';
 import type { IngestProgress, IngestResult, MoveTarget, ScanBatch, ScheduleTerms, Snapshot, SnapshotV1, SnapshotV2 } from './ledger';
 import { validateName } from './resolve';
 import { accountFromRow, budgetFromRow, payeeFromRow, scheduleFromRow, scheduleToRow, senderFromRow, transactionFromRow, transactionToRow, unparsedFromRow } from './rows';
@@ -111,7 +111,7 @@ function fromV1(v1: SnapshotV1): SnapshotV2 {
       ...t, counterpartyMasked,
       accountId: account ? upsertAccount(s, account, t.createdAt) : null,
       payeeId: payee ? upsertPayee(s, payee, t.createdAt) : null,
-      payeeOverrideId: null, categoryByUser: t.status === 'manual', ...NOT_A_DUPLICATE,
+      payeeOverrideId: null, categoryByUser: t.status === 'manual', ...NOT_A_DUPLICATE, transferAccountId: null,
       ...reportedFigures(t.rawBody ?? '', t.accountLast4),
     }));
   }
@@ -259,6 +259,9 @@ export async function dismissUnparsed(id: string): Promise<void> {
 }
 export async function setTransactionCategory(id: string, category: Category): Promise<void> {
   update(s => Object.assign(row(s, id), { category, category_by_user: 1, updated_at: Date.now() }));
+}
+export async function setTransfer(id: string, from: string | null, to: string | null): Promise<void> {
+  update(s => { const r = row(s, id); const sides = transferSides(r.direction, from, to); Object.assign(r, { account_id: sides.accountId, transfer_account_id: sides.transferAccountId, updated_at: Date.now() }); });
 }
 
 export async function movePayee(id: string, target: MoveTarget): Promise<string> {

@@ -28,7 +28,7 @@ export default function ImportSms() {
       status: 'review', accountLast4: parsed.accountLast4, reference: parsed.reference,
       counterpartyMasked: parsed.counterpartyMasked, counterpartyLast4: parsed.counterpartyLast4,
       confidence: parsed.confidence, createdAt: now, updatedAt: now,
-      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, ...NOT_A_DUPLICATE,
+      accountId: null, payeeId: null, payeeOverrideId: null, categoryByUser: false, ...NOT_A_DUPLICATE, transferAccountId: null,
       reportedBalancePaise: parsed.reportedBalancePaise, reportedAvlLimitPaise: parsed.reportedAvlLimitPaise });
   }
   async function save() {
